@@ -1,0 +1,167 @@
+/**
+ * Lista de campos baseada exatamente na planilha atual da Elaynne (3 pacotes:
+ * Completo, Básico, Essencial — cada um com seu próprio prazo, datas e formas
+ * de pagamento). Os rótulos abaixo são iguais aos da planilha para a colagem
+ * funcionar direto, sem precisar traduzir nada.
+ */
+const PACKAGES = [
+  { id: 'completo', label: 'Completo' },
+  { id: 'basico', label: 'Básico' },
+  { id: 'essencial', label: 'Essencial' },
+]
+
+function packageFieldGroups() {
+  const groups = []
+  PACKAGES.forEach((p) => {
+    groups.push({
+      group: `Pacote ${p.label}`,
+      fields: [
+        [`pacote${cap(p.id)}Valor`, `Pacote ${p.label}`, ''],
+        [`${p.id}TotalHoras`, `${p.label} - Total de Horas`, ''],
+        [`${p.id}PrazoMeses`, `${p.label} - Prazo do projeto (mês(es))`, ''],
+        [`${p.id}Inicio`, `${p.label} - Início do Projeto`, ''],
+        [`${p.id}Fim`, `${p.label} - Fim do Projeto`, ''],
+        [`${p.id}Apresentacao1`, `${p.label} - 1° apresentação`, ''],
+        [`${p.id}Apresentacao2`, `${p.label} - 2° apresentação`, ''],
+        [`${p.id}Apresentacao3`, `${p.label} - 3° apresentação final`, ''],
+      ],
+    })
+  })
+  PACKAGES.forEach((p) => {
+    groups.push({
+      group: `Pagamento — Pacote ${p.label}`,
+      fields: [
+        [`pacote${cap(p.id)}Valor`, `Valor do Pacote ${p.label}`, ''],
+        [`${p.id}PagamentoAVista`, `${p.label} - Pagamento à vista`, ''],
+        [`${p.id}PagamentoPorMes`, `${p.label} - Pagamento por mês projetual`, ''],
+        [`${p.id}PagamentoMetade`, `${p.label} - Pagamento Metade/Metade`, ''],
+        [`${p.id}CartaoTotal`, `${p.label} - Cartão de Crédito - Total (juros)`, ''],
+        [`${p.id}CartaoParcela12x`, `${p.label} - Cartão de Crédito - Parcela 12x`, ''],
+      ],
+    })
+  })
+  return groups
+}
+
+function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1) }
+
+export const PACKAGE_LIST = PACKAGES
+
+export const FIELD_GROUPS = [
+  {
+    group: 'Informações gerais',
+    fields: [
+      ['tipologiaProjeto', 'Tipologia do projeto', ''],
+      ['nomeCliente', 'Nome do cliente', ''],
+      ['descricaoProjeto', 'Descrição do projeto', ''],
+      ['enderecoImovel', 'Endereço do imóvel', ''],
+      ['quantAmbientes', 'Quantidade de ambientes', ''],
+      ['ambientesMaiorDificuldade', 'Ambientes (maior dificuldade)', ''],
+      ['ambientesMenorDificuldade', 'Ambientes (menor dificuldade)', ''],
+    ],
+  },
+  {
+    group: 'Valores base',
+    fields: [
+      ['valorHoraTecnica', 'Valor Hora Técnica', ''],
+      ['valorDiaria', 'Valor da Diária', ''],
+      ['rrtProjeto', 'RRT Projeto', ''],
+      ['rrtObra', 'RRT Obra', ''],
+      ['impressaoProjeto', 'Impressão do projeto', ''],
+    ],
+  },
+  ...packageFieldGroups(),
+  {
+    group: 'Formas de pagamento (gerais)',
+    fields: [
+      ['descontoAVista', 'Desconto à vista', ''],
+      ['pagamentoCartaoMeses', 'Pagamento Cartão - Mêses', ''],
+      ['pagamentoCartaoJuros', 'Pagamento Cartão - Juros', ''],
+    ],
+  },
+  {
+    group: 'Descrição do projeto — Etapas principais (uma linha por item)',
+    fields: [['etapasPrincipais', 'Etapas principais', '', true]],
+  },
+  {
+    group: 'Escopo — Plantas gerais (uma linha por item)',
+    fields: [['plantasGerais', 'Plantas Gerais', '', true]],
+  },
+  {
+    group: 'Escopo — Plantas principais (uma linha por item)',
+    fields: [['plantasPrincipais', 'Plantas Principais', '', true]],
+  },
+  {
+    group: 'Escopo — Plantas complementares (uma linha por item)',
+    fields: [['pantasComplementares', 'Pantas Complementares', '', true]],
+  },
+  {
+    group: 'Escopo — Vistas 2D (uma linha por item)',
+    fields: [['vistas2D', 'Vistas 2D', '', true]],
+  },
+  {
+    group: 'Escopo — Detalhes (uma linha por item)',
+    fields: [['detalhes', 'Detalhes', '', true]],
+  },
+  {
+    group: 'Escopo — Interiores (uma linha por item)',
+    fields: [['interiores', 'Interiores', '', true]],
+  },
+  {
+    group: 'Escopo — Outros (uma linha por item)',
+    fields: [['outros', 'Outros', '', true]],
+  },
+  {
+    group: 'Acompanhamento de obra',
+    fields: [
+      ['acompanhamentoObraMeses', 'Acompanhamento de obra (mêses)', ''],
+      ['acompanhamentoObraDias', 'Acompanhamento de obra (dias por mês)', ''],
+    ],
+  },
+]
+
+export const ALL_FIELD_CODES = [...new Set(FIELD_GROUPS.flatMap((g) => g.fields.map(([code]) => code)))]
+export const FIELD_LABELS = Object.fromEntries(FIELD_GROUPS.flatMap((g) => g.fields.map(([code, label]) => [code, label])))
+// mesma variável pode ter mais de um rótulo na planilha (ex: "Pacote Completo" e "Valor do
+// Pacote Completo" são o mesmo valor) — este mapa reconhece TODOS os rótulos possíveis.
+export const LABEL_TO_CODE = Object.fromEntries(
+  FIELD_GROUPS.flatMap((g) => g.fields.map(([code, label]) => [label.toLowerCase(), code]))
+)
+export const LIST_FIELD_CODES = new Set(
+  FIELD_GROUPS.flatMap((g) => g.fields.filter(([, , , isList]) => isList).map(([code]) => code))
+)
+
+export function defaultFieldsObject() {
+  const obj = {}
+  FIELD_GROUPS.forEach((g) => g.fields.forEach(([code, , def]) => { if (!(code in obj)) obj[code] = def }))
+  return obj
+}
+
+/** Quebra um campo-lista (várias linhas) em itens, removendo vazios e "0" (placeholder de linha não usada na planilha) */
+export function listItems(value) {
+  if (!value) return []
+  return String(value)
+    .split('\n')
+    .map((v) => v.trim())
+    .filter((v) => v && hasValue(v))
+}
+
+/** Verdadeiro se o valor está vazio, é "0" ou é um valor monetário zerado (ex: "R$0,00") */
+export function hasValue(v) {
+  if (v === undefined || v === null) return false
+  const s = String(v).trim()
+  if (!s) return false
+  if (s === '0') return false
+  const cleaned = s.replace(/R\$/gi, '').replace(/%/g, '').replace(/\./g, '').replace(',', '.').trim()
+  const n = parseFloat(cleaned)
+  if (!isNaN(n) && n === 0) return false
+  return true
+}
+
+/** Formata número como moeda BRL quando fizer sentido */
+export function money(v) {
+  if (v === undefined || v === null || v === '') return ''
+  const n = typeof v === 'number' ? v : parseFloat(String(v).replace('R$', '').replace(/\./g, '').replace(',', '.').trim())
+  if (isNaN(n)) return v
+  return n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+}
