@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback, useMemo } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { getProposal, saveProposal, getSettings, addSavedSwatch, addSavedPalette, removeSavedPalette, listEvents, saveEvent, deleteEvent } from '../lib/db'
 import { toEmbedUrl, parseMoneyBR } from '../lib/fields'
@@ -218,14 +218,52 @@ function AgendamentosTab({ proposal }) {
     refresh()
   }
 
+  // datas automáticas já informadas na proposta (proposta, contrato, e as datas do pacote escolhido)
+  const autoDates = useMemo(() => {
+    const list = []
+    if (proposal.scheduledAt) { const d = new Date(proposal.scheduledAt); if (!isNaN(d)) list.push({ label: 'Apresentação da proposta', date: d }) }
+    if (proposal.contractedAt) { const d = new Date(proposal.contractedAt); if (!isNaN(d)) list.push({ label: 'Contratação', date: d }) }
+    const pkg = PACKAGE_LIST.find((pk) => pk.id === proposal.acceptedPackageId)
+    if (pkg) {
+      ;[
+        ['Início do projeto', `${pkg.id}Inicio`],
+        ['1ª apresentação — Estudo preliminar', `${pkg.id}Apresentacao1`],
+        ['2ª apresentação — Projeto gráfico', `${pkg.id}Apresentacao2`],
+        ['3ª apresentação — Entrega final', `${pkg.id}Apresentacao3`],
+        ['Entrega do projeto', `${pkg.id}Fim`],
+      ].forEach(([label, code]) => {
+        const raw = proposal.fields?.[code]
+        const d = parseBrDate(raw)
+        if (d) list.push({ label, date: d })
+      })
+    }
+    return list
+  }, [proposal])
+
   if (events === null) return <p className="text-sm text-muted">Carregando…</p>
 
   return (
     <div className="max-w-xl">
-      <p className="text-sm text-muted mb-4">Compromissos marcados na Agenda e vinculados a esta proposta.</p>
+      {autoDates.length > 0 && (
+        <div className="mb-6">
+          <h3 className="text-sm font-medium text-ink mb-2">Datas já informadas nesta proposta</h3>
+          <div className="space-y-1.5">
+            {autoDates.map((a, i) => (
+              <div key={i} className="flex items-center justify-between text-sm border border-line rounded-lg px-3 py-2">
+                <span className="text-ink/80">{a.label}</span>
+                <span className="text-muted">{a.date.toLocaleDateString('pt-BR')}</span>
+              </div>
+            ))}
+          </div>
+          <p className="text-[11px] text-muted mt-1">Editáveis em "Dados do projeto" (pacote) ou no topo da página (Proposta/Contrato).</p>
+        </div>
+      )}
+
+      <h3 className="text-sm font-medium text-ink mb-2">Compromissos avulsos com este cliente</h3>
+      <p className="text-sm text-muted mb-4">Marcados na Agenda e vinculados a esta proposta.</p>
       <div className="space-y-2 mb-4">
         {events.length === 0 ? (
-          <p className="text-sm text-muted">Nenhum compromisso vinculado ainda.</p>
+          <p className="text-sm text-muted">Nenhum compromisso avulso ainda.</p>
         ) : events.sort((a, b) => new Date(a.date) - new Date(b.date)).map((e) => (
           <div key={e.id} className="border border-line rounded-lg p-3 flex items-center gap-3">
             <div className="flex-1">
@@ -479,4 +517,14 @@ function CustomSlidesTab({ proposal, onChange }) {
       <button onClick={addSlide} className="mt-4 text-sm font-medium text-white bg-ink px-4 py-2 rounded-full hover:opacity-90">+ Novo slide</button>
     </div>
   )
+}
+
+function parseBrDate(s) {
+  if (!s) return null
+  const m = String(s).trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/)
+  if (!m) return null
+  const [, dd, mm, yyyy] = m
+  const year = yyyy.length === 2 ? `20${yyyy}` : yyyy
+  const d = new Date(Number(year), Number(mm) - 1, Number(dd))
+  return isNaN(d) ? null : d
 }

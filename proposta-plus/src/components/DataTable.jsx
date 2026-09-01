@@ -28,11 +28,14 @@ export default function DataTable({ fields, onChange }) {
     pasteText.split('\n').forEach((line) => {
       if (!line.trim()) return
       const parts = line.split('\t')
-      const code = parts.length >= 2 ? matchCode(parts[0]) : null
+      let code = parts.length >= 2 ? matchCode(parts[0]) : null
+      // linha com só o rótulo, sem tabulação nem valor (célula vazia na planilha) — ainda
+      // reconhece o campo, só que com valor em branco, pra não confundir com continuação
+      const isLabelOnly = !code && parts.length === 1 && matchCode(parts[0])
+      if (isLabelOnly) code = matchCode(parts[0])
 
       if (code) {
-        // linha normal "rótulo\tvalor"
-        const value = parts.slice(1).join('\t').trim()
+        const value = parts.length >= 2 ? parts.slice(1).join('\t').trim() : ''
         matched++
         lastCode = code
         lastIsList = LIST_FIELD_CODES.has(code)
@@ -44,6 +47,11 @@ export default function DataTable({ fields, onChange }) {
         }
         return
       }
+
+      // cabeçalhos de seção na planilha (ex: "VALORES", "FORMAS DE PAGAMENTO") não têm
+      // tabulação nem são reconhecidos — não devem "grudar" no campo anterior
+      const looksLikeSectionHeader = line.trim() === line.trim().toUpperCase() && /[A-ZÀ-Ú]/.test(line.trim())
+      if (looksLikeSectionHeader) return
 
       // linha sem rótulo reconhecido: se o campo anterior não é de lista, tratamos
       // como continuação do texto dele (ex: descrição colada com quebra de linha)

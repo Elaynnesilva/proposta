@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { listProposals, listEvents, saveEvent, deleteEvent } from '../lib/db'
+import { listProposals, listEvents, saveEvent, deleteEvent, saveProposal } from '../lib/db'
 import { PACKAGE_LIST } from '../lib/fields'
 
 const KIND_META = {
@@ -12,6 +12,17 @@ const KIND_META = {
   ap3: { icon: '📐', label: '3ª apresentação — Entrega final', color: '#0D9488' },
   fim: { icon: '🏁', label: 'Entrega do projeto', color: '#16803C' },
   custom: { icon: '📌', label: 'Compromisso', color: '#B45309' },
+}
+
+// campo da proposta que cada tipo de evento representa — usado pra "reagendar" escrever de volta
+const FIELD_BY_KIND = {
+  proposta: { target: 'proposal', field: 'scheduledAt' },
+  contrato: { target: 'proposal', field: 'contractedAt' },
+  inicio: { target: 'fields', suffix: 'Inicio' },
+  ap1: { target: 'fields', suffix: 'Apresentacao1' },
+  ap2: { target: 'fields', suffix: 'Apresentacao2' },
+  ap3: { target: 'fields', suffix: 'Apresentacao3' },
+  fim: { target: 'fields', suffix: 'Fim' },
 }
 
 export default function Agenda() {
@@ -34,6 +45,13 @@ export default function Agenda() {
   async function refreshEvents() {
     try {
       setCustomEvents(await listEvents())
+    } catch (err) {
+      console.error(err)
+    }
+  }
+  async function refreshProposals() {
+    try {
+      setProposals(await listProposals())
     } catch (err) {
       console.error(err)
     }
@@ -66,7 +84,7 @@ export default function Agenda() {
           ]
           pairs.forEach(([kind, fieldCode]) => {
             const d = parseBrDate(p.fields?.[fieldCode])
-            if (d) list.push({ date: d, kind, client, proposalId: p.id, tipologia: p.tipologia })
+            if (d) list.push({ date: d, kind, client, proposalId: p.id, tipologia: p.tipologia, packageId: pkg.id })
           })
         }
       }
@@ -133,8 +151,33 @@ export default function Agenda() {
     refreshEvents()
   }
 
+  /** "Reagendar": muda a data/hora de um compromisso. Para compromissos avulsos, atualiza o
+   *  próprio compromisso. Para datas automáticas (proposta, contrato, pacote), atualiza o
+   *  campo correspondente dentro da proposta — assim a proposta e a agenda nunca ficam
+   *  desencontradas. */
+  async function reschedule(e, newDateStr) {
+    if (e.kind === 'custom') {
+      await saveEvent({ id: e.eventId, title: e.title, client: e.client, date: newDateStr, proposalId: e.proposalId, completed: e.completed })
+      refreshEvents()
+      return
+    }
+    const proposal = proposals.find((p) => p.id === e.proposalId)
+    if (!proposal) return
+    const map = FIELD_BY_KIND[e.kind]
+    if (!map) return
+    const newDate = new Date(newDateStr)
+    if (map.target === 'proposal') {
+      await saveProposal({ ...proposal, [map.field]: newDateStr })
+    } else {
+      const fieldCode = `${e.packageId}${map.suffix}`
+      const ddmmyyyy = `${String(newDate.getDate()).padStart(2, '0')}/${String(newDate.getMonth() + 1).padStart(2, '0')}/${newDate.getFullYear()}`
+      await saveProposal({ ...proposal, fields: { ...(proposal.fields || {}), [fieldCode]: ddmmyyyy } })
+    }
+    refreshProposals()
+  }
+
   return (
-    <div className="max-w-4xl mx-auto p-6 md:p-10">
+    <div className="max-w-5xl mx-auto p-6 md:p-10">
       <div className="flex items-start justify-between flex-wrap gap-3 mb-1">
         <div>
           <h1 className="font-display text-2xl md:text-3xl text-ink mb-1">Agenda</h1>
@@ -163,13 +206,7 @@ export default function Agenda() {
       {loading ? (
         <p className="text-sm text-muted">Carregando…</p>
       ) : search.trim() ? (
-        <div className="bg-white border border-line rounded-2xl divide-y divide-line">
-          {searchResults.length === 0 ? (
-            <div className="p-6 text-center text-sm text-muted">Nada encontrado.</div>
-          ) : searchResults.map((e, i) => (
-            <EventRow key={i} e={e} onOpen={() => openEvent(e)} onToggle={() => toggleCompleted(e)} />
-          ))}
-        </div>
+        <EventsTable events={searchResults} onOpen={openEvent} onToggle={toggleCompleted} onReschedule={reschedule} />
       ) : events.length === 0 ? (
         <div className="bg-white border border-line rounded-2xl p-10 text-center text-muted text-sm">
           Nenhum compromisso ainda. Marque a data de uma apresentação dentro de cada proposta, aceite uma proposta com prazo preenchido, ou adicione um compromisso avulso.
@@ -220,24 +257,18 @@ export default function Agenda() {
             </div>
 
             {selectedEvents.length > 0 && (
-              <div className="mt-5 pt-5 border-t border-line divide-y divide-line">
-                {selectedEvents.map((e, i) => (
-                  <EventRow key={i} e={e} onOpen={() => openEvent(e)} onToggle={() => toggleCompleted(e)} />
-                ))}
+              <div className="mt-5 pt-5 border-t border-line">
+                <EventsTable events={selectedEvents} onOpen={openEvent} onToggle={toggleCompleted} onReschedule={reschedule} compact />
               </div>
             )}
           </div>
 
-          {/* lista completa, estilo checklist */}
+          {/* lista completa, estilo tabela */}
           <div className="bg-white border border-line rounded-2xl overflow-hidden">
             <div className="px-5 py-3 border-b border-line">
               <h3 className="font-medium text-ink text-sm">Todos os compromissos</h3>
             </div>
-            <div className="divide-y divide-line max-h-[420px] overflow-y-auto">
-              {events.map((e, i) => (
-                <EventRow key={i} e={e} onOpen={() => openEvent(e)} onToggle={() => toggleCompleted(e)} detailed />
-              ))}
-            </div>
+            <EventsTable events={events} onOpen={openEvent} onToggle={toggleCompleted} onReschedule={reschedule} />
           </div>
         </>
       )}
@@ -245,28 +276,60 @@ export default function Agenda() {
   )
 }
 
-function EventRow({ e, onOpen, onToggle, detailed }) {
-  const meta = KIND_META[e.kind]
+/** Tabela de compromissos: check | data | hora | tarefa | cliente | tipo | reagendar */
+function EventsTable({ events, onOpen, onToggle, onReschedule, compact }) {
   return (
-    <div className={`w-full text-left text-sm px-3 py-2.5 flex items-center gap-2.5 ${e.completed ? 'opacity-50' : ''}`}>
-      {e.kind === 'custom' ? (
-        <input type="checkbox" checked={!!e.completed} onChange={(ev) => { ev.stopPropagation(); onToggle() }} className="shrink-0" />
-      ) : (
-        <span>{meta.icon}</span>
-      )}
-      <button onClick={onOpen} className="flex-1 text-left min-w-0">
-        <span className={e.completed ? 'line-through' : ''}>
-          <span className="text-muted">{e.title || meta.label} — </span><strong>{e.client}</strong>
-        </span>
-        <span className="block text-xs text-muted">
-          {e.date.toLocaleDateString('pt-BR')} · {e.date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
-          {detailed && e.tipologia && <span className="capitalize"> · {e.tipologia}</span>}
-        </span>
-      </button>
-      <span className="text-xs text-muted shrink-0">{e.kind === 'custom' ? 'editar' : '→'}</span>
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        {!compact && (
+          <thead>
+            <tr className="text-left text-xs text-muted uppercase border-b border-line">
+              <th className="px-4 py-2 font-medium w-8"></th>
+              <th className="px-2 py-2 font-medium">Data</th>
+              <th className="px-2 py-2 font-medium">Hora</th>
+              <th className="px-2 py-2 font-medium">Tarefa</th>
+              <th className="px-2 py-2 font-medium">Cliente</th>
+              <th className="px-2 py-2 font-medium">Tipo</th>
+              <th className="px-2 py-2 font-medium">Reagendar</th>
+            </tr>
+          </thead>
+        )}
+        <tbody className="divide-y divide-line">
+          {events.map((e, i) => {
+            const meta = KIND_META[e.kind]
+            return (
+              <tr key={i} className={e.completed ? 'opacity-50' : ''}>
+                <td className="px-4 py-2.5">
+                  {e.kind === 'custom' ? (
+                    <input type="checkbox" checked={!!e.completed} onChange={() => onToggle(e)} />
+                  ) : (
+                    <span title={meta.label}>{meta.icon}</span>
+                  )}
+                </td>
+                <td className="px-2 py-2.5 whitespace-nowrap">{e.date.toLocaleDateString('pt-BR')}</td>
+                <td className="px-2 py-2.5 whitespace-nowrap">{e.date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</td>
+                <td className="px-2 py-2.5">
+                  <button onClick={() => onOpen(e)} className={`text-left hover:underline ${e.completed ? 'line-through' : ''}`}>{e.title || meta.label}</button>
+                </td>
+                <td className="px-2 py-2.5 whitespace-nowrap">{e.client}</td>
+                <td className="px-2 py-2.5 whitespace-nowrap capitalize text-muted">{e.tipologia || '—'}</td>
+                <td className="px-2 py-2.5">
+                  <input
+                    type="datetime-local"
+                    defaultValue={toLocalInputValue(e.date)}
+                    onBlur={(ev) => { if (ev.target.value && ev.target.value !== toLocalInputValue(e.date)) onReschedule(e, ev.target.value) }}
+                    className="text-xs p-1 rounded border border-line outline-none focus:border-clay"
+                  />
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
     </div>
   )
 }
+
 
 function NewEventForm({ proposals, editingEvent, onClose, onSaved, onDelete }) {
   const [title, setTitle] = useState(editingEvent?.title || '')

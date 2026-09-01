@@ -112,6 +112,14 @@ export const FIELD_GROUPS = [
     fields: [['outros', 'Outros', '', true]],
   },
   {
+    group: 'Benefícios de cada pacote (uma linha por item)',
+    fields: [
+      ['beneficiosCompleto', 'PACOTE COMPLETO', '', true],
+      ['beneficiosBasico', 'PACOTE BÁSICO', '', true],
+      ['beneficiosEssencial', 'PACOTE ESSENCIAL', '', true],
+    ],
+  },
+  {
     group: 'Acompanhamento de obra',
     fields: [
       ['acompanhamentoObraMeses', 'Acompanhamento de obra (mêses)', ''],

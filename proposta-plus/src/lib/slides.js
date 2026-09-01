@@ -191,9 +191,10 @@ export function buildSlides({ fields, content, images, settings, custom = [], vi
       value: money(value),
       schedule,
       paymentCards,
+      benefits: listItems(f(`beneficios${cap(pkg.id)}`)),
     })
 
-    packageSummaries.push({ id: pkg.id, label: pkg.label, value: money(value), schedule, paymentCards })
+    packageSummaries.push({ id: pkg.id, label: pkg.label, value: money(value), schedule, paymentCards, benefits: listItems(f(`beneficios${cap(pkg.id)}`)) })
   })
 
   if (packageSummaries.length > 1) {

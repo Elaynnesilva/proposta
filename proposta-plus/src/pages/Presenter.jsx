@@ -418,7 +418,7 @@ function getItemsLength(slide) {
   // nestes dois, o texto aparece todo de uma vez — quem controla o clique agora são as imagens
   if (slide.type === 'scopeSection' || slide.type === 'modeling') return effectiveImages(slide).length
   // aqui os textos continuam clicáveis normalmente, mas os cards de valor entram como um passo extra, no final
-  if (slide.type === 'pricingCalc') return (slide.items?.length || 0) + ((slide.hourValue || slide.dayValue) ? 1 : 0)
+  if (slide.type === 'pricingCalc') return (slide.hourValue || slide.dayValue) ? 1 : 0
   // o valor + prazo do pacote é o 1º passo; os cards de pagamento vêm depois, um a um
   if (slide.type === 'packagePricing') return (slide.paymentCards?.length || 0) + 1
   if (slide.type === 'packagesSummary') return slide.packages?.length || 0
@@ -1316,17 +1316,18 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
 
     case 'pricingCalc': {
       const { bg, heading, titleColor } = slideColors(slide, SAND, c1)
-      const lastTextStep = slide.items.length
       return (
-        <div className="w-full h-full p-10 md:p-16 overflow-auto flex flex-col md:flex-row md:items-center gap-10" style={{ background: bg }}>
-          <div className="flex-1">
-            <h2 className="text-xl md:text-2xl mb-6" style={{ ...titleStyle, color: titleColor }}>{slide.title}</h2>
-            <ul className="space-y-2 max-w-xl">
-              {slide.items.map((it, i) => (<Reveal key={i} i={i} revealCount={revealCount} className="text-base" style={{ color: heading, opacity: 0.85 }}>• {it}</Reveal>))}
-            </ul>
-          </div>
+        <div className="w-full h-full p-10 md:p-16 overflow-auto flex flex-col" style={{ background: bg }}>
+          <h2 className="text-xl md:text-2xl mb-6" style={{ ...titleStyle, color: titleColor }}>{slide.title}</h2>
+          {/* os tópicos aparecem juntos, sem precisar clicar */}
+          <ul className="space-y-2 max-w-2xl mb-8">
+            {slide.items.map((it, i) => (
+              <li key={i} className="auto-left-item text-base" style={{ animationDelay: `${i * 30}ms`, color: heading, opacity: 0.85 }}>• {it}</li>
+            ))}
+          </ul>
+          {/* os cards só aparecem depois dos tópicos, com um clique */}
           {(slide.hourValue || slide.dayValue) && (
-            <Reveal i={lastTextStep} revealCount={revealCount} className="flex flex-col gap-3 md:w-72 shrink-0">
+            <Reveal i={0} revealCount={revealCount} className="flex flex-wrap gap-4">
               {slide.hourValue && <PriceTag label="Hora técnica" value={slide.hourValue} radius={radius} c1={c1} big />}
               {slide.dayValue && <PriceTag label="Diária de trabalho" value={slide.dayValue} radius={radius} c1={c1} big />}
             </Reveal>
@@ -1355,6 +1356,11 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
                       </div>
                     ))}
                   </div>
+                  {pkg.benefits && pkg.benefits.length > 0 && (
+                    <ul className="text-xs space-y-1 mb-3 pt-3 border-t border-line" style={{ color: heading, opacity: 0.75 }}>
+                      {pkg.benefits.map((b, k) => <li key={k}>• {b}</li>)}
+                    </ul>
+                  )}
                   {extra?.image && <img src={extra.image} alt="" className="w-full aspect-square object-cover rounded-lg mb-3" style={{ objectPosition: `${extra.posX ?? 50}% ${extra.posY ?? 50}%` }} />}
                   {extra?.description && <div className="text-sm mt-auto pt-2" style={{ color: heading, opacity: 0.8 }}>{extra.description}</div>}
                 </Reveal>
@@ -1367,39 +1373,59 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
 
     case 'packagePricing': {
       const { bg, heading, titleColor } = slideColors(slide, SAND, c1)
+      const hasBenefits = slide.benefits && slide.benefits.length > 0
       return (
-        <div className="w-full h-full p-10 md:p-16 overflow-auto" style={{ background: bg }}>
-          <h2 className="text-2xl md:text-3xl mb-8" style={{ ...titleStyle, color: titleColor }}>{slide.title}</h2>
-          <Reveal i={0} revealCount={revealCount} className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-6 max-w-4xl">
-            <div className="p-7 bg-white border border-line" style={{ borderRadius: radius }}>
-              <div className="text-sm uppercase tracking-wide opacity-60 mb-2" style={{ color: heading }}>Valor do pacote</div>
-              <div className="text-3xl font-semibold" style={{ color: c1, fontFamily: STYLE.displayFont }}>{slide.value}</div>
-            </div>
-            {slide.schedule.length > 0 && (
-              <div className="p-7 bg-white border border-line" style={{ borderRadius: radius }}>
-                <div className="text-sm uppercase tracking-wide opacity-60 mb-2" style={{ color: heading }}>Prazo do projeto</div>
-                <div className="text-base" style={{ color: heading, opacity: 0.8 }}>{slide.schedule.join(' · ')}</div>
-              </div>
+        <div className="w-full h-full grid grid-cols-1 md:grid-cols-2">
+          {/* metade esquerda: título + benefícios do pacote — aparecem juntos, sem precisar clicar */}
+          <div className="p-8 md:p-12 flex flex-col justify-center overflow-auto" style={{ background: bg }}>
+            <h2 className="text-2xl md:text-3xl mb-6" style={{ ...titleStyle, color: titleColor }}>{slide.title}</h2>
+            {hasBenefits && (
+              <>
+                <div className="text-sm font-medium uppercase tracking-wide mb-3" style={{ color: heading, opacity: 0.6 }}>Benefícios do pacote</div>
+                <div className="space-y-2">
+                  {slide.benefits.map((b, i) => (
+                    <div key={i} className="auto-left-item flex items-start gap-2" style={{ animationDelay: `${i * 40}ms`, color: heading, opacity: 0.85 }}>
+                      <span style={{ color: c1 }}>●</span><span>{b}</span>
+                    </div>
+                  ))}
+                </div>
+              </>
             )}
-          </Reveal>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-4xl">
-            {slide.paymentCards.map((p, i) => (
-              <Reveal
-                key={p.id} i={i + 1} revealCount={revealCount}
-                className="p-7 text-left"
-                style={{
-                  borderRadius: radius,
-                  background: p.highlight ? c2 : 'white',
-                  color: p.highlight ? t2 : '#28313C',
-                  border: p.highlight ? 'none' : '1px solid #E4DFD6',
-                  boxShadow: p.highlight ? '0 8px 24px rgba(0,0,0,0.12)' : 'none',
-                }}
-              >
-                <div className="text-sm uppercase tracking-wide opacity-70 mb-2">{p.label}{p.highlight ? ' ★' : ''}</div>
-                <div className="text-2xl md:text-3xl font-semibold mb-2" style={{ color: p.highlight ? c1OnC2 : c1, fontFamily: STYLE.displayFont }}>{p.value}</div>
-                {p.detail && <div className="text-sm opacity-70">{p.detail}</div>}
-              </Reveal>
-            ))}
+          </div>
+
+          {/* metade direita: valor, prazo e formas de pagamento — só aparecem depois, ao clicar */}
+          <div className="p-8 md:p-12 overflow-auto bg-white flex flex-col justify-center">
+            <Reveal i={0} revealCount={revealCount} className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
+              <div className="p-5 border border-line" style={{ borderRadius: radius }}>
+                <div className="text-xs uppercase tracking-wide opacity-60 mb-1" style={{ color: '#28313C' }}>Valor do pacote</div>
+                <div className="text-2xl font-semibold" style={{ color: c1, fontFamily: STYLE.displayFont }}>{slide.value}</div>
+              </div>
+              {slide.schedule.length > 0 && (
+                <div className="p-5 border border-line" style={{ borderRadius: radius }}>
+                  <div className="text-xs uppercase tracking-wide opacity-60 mb-1" style={{ color: '#28313C' }}>Prazo do projeto</div>
+                  <div className="text-sm" style={{ color: '#28313C', opacity: 0.8 }}>{slide.schedule.join(' · ')}</div>
+                </div>
+              )}
+            </Reveal>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {slide.paymentCards.map((p, i) => (
+                <Reveal
+                  key={p.id} i={i + 1} revealCount={revealCount}
+                  className="p-5 text-left"
+                  style={{
+                    borderRadius: radius,
+                    background: p.highlight ? c2 : 'white',
+                    color: p.highlight ? t2 : '#28313C',
+                    border: p.highlight ? 'none' : '1px solid #E4DFD6',
+                    boxShadow: p.highlight ? '0 8px 24px rgba(0,0,0,0.12)' : 'none',
+                  }}
+                >
+                  <div className="text-xs uppercase tracking-wide opacity-70 mb-1">{p.label}{p.highlight ? ' ★' : ''}</div>
+                  <div className="text-xl font-semibold mb-1" style={{ color: p.highlight ? c1OnC2 : c1, fontFamily: STYLE.displayFont }}>{p.value}</div>
+                  {p.detail && <div className="text-xs opacity-70">{p.detail}</div>}
+                </Reveal>
+              ))}
+            </div>
           </div>
         </div>
       )
@@ -1574,9 +1600,9 @@ function TopicImageSlide({ slide, c1, revealCount, radius }) {
       {hasImages && (
         <div className="min-h-0" style={{ flex: '0 1 48%' }}>
           {layout === 'grid' ? (
-            <div className="grid grid-cols-2 gap-5 h-full">
+            <div className="grid grid-cols-2 gap-5 justify-items-center content-center" style={{ maxHeight: '100%' }}>
               {imgs.map((img, i) => (
-                <div key={i} className="relative overflow-hidden bg-[#DDD6C8]" style={{ borderRadius: radius }}>
+                <div key={i} className="relative overflow-hidden bg-[#DDD6C8] w-full" style={{ borderRadius: radius, aspectRatio: RATIO_CSS[img.ratio] || '1 / 1', maxHeight: '100%' }}>
                   <Reveal i={i} revealCount={revealCount} className="absolute inset-0">
                     <SlideImage src={img.url} className="w-full h-full" style={{ objectPosition: `${img.posX ?? 50}% ${img.posY ?? 50}%` }} />
                   </Reveal>
@@ -1584,9 +1610,9 @@ function TopicImageSlide({ slide, c1, revealCount, radius }) {
               ))}
             </div>
           ) : (
-            <div className="flex gap-5 h-full">
+            <div className="flex gap-5 h-full justify-center">
               {imgs.map((img, i) => (
-                <div key={i} className="flex-1 min-w-0 relative overflow-hidden bg-[#DDD6C8]" style={{ borderRadius: radius }}>
+                <div key={i} className="relative overflow-hidden bg-[#DDD6C8] h-full" style={{ borderRadius: radius, aspectRatio: RATIO_CSS[img.ratio] || '1 / 1' }}>
                   <Reveal i={i} revealCount={revealCount} className="absolute inset-0">
                     <SlideImage src={img.url} className="w-full h-full" style={{ objectPosition: `${img.posX ?? 50}% ${img.posY ?? 50}%` }} />
                   </Reveal>
