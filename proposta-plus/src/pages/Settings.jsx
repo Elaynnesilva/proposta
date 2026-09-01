@@ -4,7 +4,6 @@ import { DEFAULT_SHARED_TEXT, DEFAULT_IMAGES, TIPOLOGIAS } from '../lib/content'
 
 const TABS = [
   { id: 'empresa', label: 'Empresa' },
-  { id: 'fotos', label: 'Fotos por tipologia' },
 ]
 
 export default function Settings() {
@@ -96,42 +95,6 @@ export default function Settings() {
           <Field label="Cidade(s) de atuação" value={settings.city} onChange={(v) => persistSettings({ city: v })} />
           <Field label="Instagram" value={settings.instagram} onChange={(v) => persistSettings({ instagram: v })} />
           <Field label="WhatsApp" value={settings.whatsapp} onChange={(v) => persistSettings({ whatsapp: v })} />
-          <div className="text-sm text-muted bg-sand border border-line rounded-lg p-3">
-            O texto de apresentação pessoal (bio, cidades de atuação, missão) agora é editado direto no slide "Sobre mim" da apresentação — clique em <strong>✎ Editar slide</strong> lá. Isso evita ter dois lugares diferentes controlando o mesmo texto.
-          </div>
-          <div className="text-sm text-muted bg-sand border border-line rounded-lg p-3">
-            Os demais textos padrão (agenda, motivos, jornada do cliente, apresentações de projeto, feedbacks, encerramento) agora são editados direto em cada slide da apresentação. Abra qualquer proposta → Apresentar → clique em <strong>✎ Editar slide</strong> → escolha "Todas as propostas" para que a mudança valha em todo o sistema.
-          </div>
-        </div>
-      )}
-
-      {tab === 'fotos' && (
-        <div className="space-y-10">
-          <p className="text-sm text-muted max-w-xl">
-            Cada tipologia tem seu próprio banco de fotos. Trocar uma foto aqui só muda naquele tipo de projeto
-            (residencial, comercial ou corporativo) — os textos continuam os mesmos nos três.
-          </p>
-          {TIPOLOGIAS.map((t) => (
-            <div key={t.id}>
-              <h3 className="font-medium text-ink mb-3">{t.label}</h3>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                {Object.entries(content.images[t.id]).map(([slot, url]) => (
-                  <PhotoSlot
-                    key={slot}
-                    label={slot}
-                    url={url}
-                    onFile={(file) => {
-                      const reader = new FileReader()
-                      reader.onload = () => persistContent({
-                        images: { ...content.images, [t.id]: { ...content.images[t.id], [slot]: reader.result } },
-                      })
-                      reader.readAsDataURL(file)
-                    }}
-                  />
-                ))}
-              </div>
-            </div>
-          ))}
         </div>
       )}
     </div>

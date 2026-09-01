@@ -93,10 +93,10 @@ export default function Dashboard() {
     <div className="p-6 md:p-10 max-w-6xl mx-auto">
       {settings && (settings.logoDataUrl || settings.companyName) && (
         <div className="flex items-center gap-3 mb-6">
-          {settings.logoDataUrl && <img src={settings.logoDataUrl} alt="logo" className="w-12 h-12 rounded-full object-cover border border-line" />}
+          {settings.logoDataUrl && <img src={settings.logoDataUrl} alt="logo" className="w-14 h-14 rounded-full object-cover border border-line" />}
           <div>
-            {settings.companyName && <div className="font-display text-base text-ink leading-tight">{settings.companyName}</div>}
-            {settings.professionalName && <div className="text-xs text-muted leading-tight">{settings.professionalName}</div>}
+            {settings.professionalName && <div className="font-display text-xl text-ink leading-tight">{settings.professionalName}</div>}
+            {settings.companyName && <div className="text-sm text-muted leading-tight">{settings.companyName}</div>}
           </div>
         </div>
       )}

@@ -25,15 +25,17 @@ export default function Agenda() {
   const [showForm, setShowForm] = useState(false)
 
   useEffect(() => {
-    Promise.all([listProposals(), listEvents()]).then(([p, e]) => {
-      setProposals(p)
-      setCustomEvents(e)
-      setLoading(false)
-    })
+    listProposals().then(setProposals).catch((err) => console.error('Erro ao carregar propostas', err))
+    listEvents().then(setCustomEvents).catch((err) => console.error('Erro ao carregar compromissos — talvez as regras do Firestore ainda não tenham sido atualizadas', err))
+      .finally(() => setLoading(false))
   }, [])
 
   async function refreshEvents() {
-    setCustomEvents(await listEvents())
+    try {
+      setCustomEvents(await listEvents())
+    } catch (err) {
+      console.error(err)
+    }
   }
 
   const events = useMemo(() => {
@@ -270,7 +272,12 @@ function NewEventForm({ proposals, onClose, onSaved }) {
         </div>
         <div>
           <label className="text-xs text-muted block mb-1">Nome do cliente</label>
-          <input value={client} onChange={(e) => setClient(e.target.value)} className="w-full text-sm p-2 rounded-lg border border-line outline-none focus:border-clay" />
+          <input value={client} onChange={(e) => setClient(e.target.value)} list="clientes-conhecidos" className="w-full text-sm p-2 rounded-lg border border-line outline-none focus:border-clay" />
+          <datalist id="clientes-conhecidos">
+            {[...new Set(proposals.map((p) => p.fields?.nomeCliente).filter(Boolean))].map((nome) => (
+              <option key={nome} value={nome} />
+            ))}
+          </datalist>
         </div>
         <div>
           <label className="text-xs text-muted block mb-1">Data e horário</label>

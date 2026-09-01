@@ -1,4 +1,4 @@
-import { listItems, money, hasValue, PACKAGE_LIST, mesesParaTextoApresentacao } from './fields'
+import { listItems, money, hasValue, PACKAGE_LIST, mesesParaTextoApresentacao, arredondarParcelas } from './fields'
 
 const SECTION_META = {
   plantasGerais: { label: 'Plantas Gerais', icon: 'blueprint' },
@@ -22,7 +22,15 @@ const SECTION_META = {
 export function buildSlides({ fields, content, images, settings, custom = [], videoUrl = '', videoEmbedUrl = '', visibility = {} }) {
   const f = (code) => fields[code] || ''
   const list = []
-  const vis = { packages: { completo: true, basico: true, essencial: true }, payments: { cartao: true, prazo: true, avista: true, metade: true }, ...visibility }
+  const vis = {
+    packages: { completo: true, basico: true, essencial: true },
+    // formas de pagamento agora são por pacote (ocultar no Completo não afeta o Básico/Essencial);
+    // "payments" (sem pacote) fica como fallback para propostas salvas antes dessa mudança
+    payments: { cartao: true, prazo: true, avista: true, metade: true },
+    paymentsByPackage: {},
+    ...visibility,
+  }
+  const paymentsFor = (pkgId) => ({ ...vis.payments, ...(vis.paymentsByPackage?.[pkgId] || {}) })
 
   list.push({
     id: 'cover',
@@ -135,6 +143,7 @@ export function buildSlides({ fields, content, images, settings, custom = [], vi
   }
 
   // um slide por pacote, sempre nesta ordem: Completo -> Básico -> Essencial
+  const packageSummaries = []
   PACKAGE_LIST.forEach((pkg) => {
     if (!vis.packages[pkg.id]) return
     const value = f(`pacote${cap(pkg.id)}Valor`)
@@ -146,23 +155,24 @@ export function buildSlides({ fields, content, images, settings, custom = [], vi
       f(`${pkg.id}Inicio`) && f(`${pkg.id}Fim`) && `De ${f(`${pkg.id}Inicio`)} até ${f(`${pkg.id}Fim`)}`,
     ].filter(Boolean)
 
+    const payments = paymentsFor(pkg.id)
     const paymentCards = [
-      vis.payments.cartao && hasValue(f(`${pkg.id}CartaoParcela12x`)) && {
+      payments.cartao && hasValue(f(`${pkg.id}CartaoParcela12x`)) && {
         id: 'cartao', label: 'Cartão de crédito', highlight: true,
         value: `${f('pagamentoCartaoMeses') || '12'}x de ${money(f(`${pkg.id}CartaoParcela12x`))}`,
         detail: hasValue(f(`${pkg.id}CartaoTotal`)) ? `Total com juros: ${money(f(`${pkg.id}CartaoTotal`))}${f('pagamentoCartaoJuros') ? ` (${f('pagamentoCartaoJuros')} a.a.)` : ''}` : '',
       },
-      vis.payments.prazo && hasValue(f(`${pkg.id}PagamentoPorMes`)) && {
+      payments.prazo && hasValue(f(`${pkg.id}PagamentoPorMes`)) && {
         id: 'prazo', label: 'Por prazo de projeto',
-        value: `${f(`${pkg.id}PrazoMeses`) || ''}x de ${money(f(`${pkg.id}PagamentoPorMes`))}`,
+        value: `${arredondarParcelas(f(`${pkg.id}PrazoMeses`)) || ''}x de ${money(f(`${pkg.id}PagamentoPorMes`))}`,
         detail: 'Uma parcela por mês de desenvolvimento do projeto',
       },
-      vis.payments.avista && hasValue(f(`${pkg.id}PagamentoAVista`)) && {
+      payments.avista && hasValue(f(`${pkg.id}PagamentoAVista`)) && {
         id: 'avista', label: 'À vista',
         value: money(f(`${pkg.id}PagamentoAVista`)),
         detail: f('descontoAVista') ? `${f('descontoAVista')} de desconto` : '',
       },
-      vis.payments.metade && hasValue(f(`${pkg.id}PagamentoMetade`)) && {
+      payments.metade && hasValue(f(`${pkg.id}PagamentoMetade`)) && {
         id: 'metade', label: 'Metade / Metade',
         value: `2x de ${money(f(`${pkg.id}PagamentoMetade`))}`,
         detail: '50% no início, 50% na entrega',
@@ -172,12 +182,19 @@ export function buildSlides({ fields, content, images, settings, custom = [], vi
     list.push({
       id: `package-${pkg.id}`,
       type: 'packagePricing',
+      packageId: pkg.id,
       title: `Pacote ${pkg.label}`,
       value: money(value),
       schedule,
       paymentCards,
     })
+
+    packageSummaries.push({ id: pkg.id, label: pkg.label, value: money(value), schedule, paymentCards })
   })
+
+  if (packageSummaries.length > 1) {
+    list.push({ id: 'packages-summary', type: 'packagesSummary', title: 'Resumo dos pacotes', packages: packageSummaries })
+  }
 
   list.push({ id: 'video', type: 'video', title: 'Vídeo do projeto', videoUrl, embedUrl: videoEmbedUrl })
 

@@ -234,6 +234,20 @@ export function parseMoneyBR(v) {
   return isNaN(n) ? null : n
 }
 
+/**
+ * Arredonda o prazo em meses para a quantidade de PARCELAS do pagamento "por prazo de
+ * projeto": frações de até 0,15 (about ~4-5 dias) arredondam para baixo; acima disso,
+ * para cima. Ex: 1,62 -> 2 parcelas; 1,10 -> 1 parcela.
+ */
+export function arredondarParcelas(valor) {
+  if (!hasValue(valor)) return null
+  const n = parseFloat(String(valor).replace(',', '.'))
+  if (isNaN(n)) return null
+  const inteiro = Math.floor(n)
+  const fracao = n - inteiro
+  return fracao <= 0.15 ? Math.max(1, inteiro) : inteiro + 1
+}
+
 /** Formata número como moeda BRL quando fizer sentido */
 export function money(v) {
   if (v === undefined || v === null || v === '') return ''

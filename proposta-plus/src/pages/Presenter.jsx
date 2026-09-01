@@ -10,7 +10,7 @@ import { toEmbedUrl } from '../lib/fields'
 const SLIDE_ICONS = {
   cover: '🏠', agenda: '📋', profile: '👩‍🎨', divider: '—', clientRequest: '🗂️',
   reasons: '💡', scopeSection: '📐', modeling: '🧊', journeyFlow: '🧭', stages: '🎯',
-  feedbacks: '💬', pricingCalc: '🧮', packagePricing: '💰', payment: '💳', video: '🎬',
+  feedbacks: '💬', pricingCalc: '🧮', packagePricing: '💰', packagesSummary: '📊', payment: '💳', video: '🎬',
   custom: '✨', closing: '❤️',
 }
 
@@ -186,10 +186,23 @@ export default function Presenter() {
     })
   }
 
-  /** Atualiza a visibilidade de pacotes/formas de pagamento (mesmo dado da aba "Preços a mostrar" do editor). */
-  function saveVisibilityPatch(patch) {
+  /** Atualiza a visibilidade de pacotes/formas de pagamento (mesmo dado da aba "Preços a mostrar" do editor).
+   *  Quando packageId é informado, a mudança vale só para aquele pacote. */
+  function saveVisibilityPatch(patch, packageId) {
     setProposal((prev) => {
-      const next = { ...prev, visibility: { ...(prev.visibility || {}), ...patch, payments: { ...(prev.visibility?.payments || {}), ...(patch.payments || {}) } } }
+      let visibility = { ...(prev.visibility || {}) }
+      if (packageId && patch.payments) {
+        visibility = {
+          ...visibility,
+          paymentsByPackage: {
+            ...(visibility.paymentsByPackage || {}),
+            [packageId]: { ...(visibility.paymentsByPackage?.[packageId] || visibility.payments || {}), ...patch.payments },
+          },
+        }
+      } else {
+        visibility = { ...visibility, ...patch, payments: { ...(visibility.payments || {}), ...(patch.payments || {}) } }
+      }
+      const next = { ...prev, visibility }
       saveProposal(next)
       return next
     })
@@ -235,7 +248,7 @@ export default function Presenter() {
         setProposal((prev) => ({ ...prev, public: true }))
       }
       const uidForLink = auth.currentUser?.uid
-      const url = `${window.location.origin}/ver/${uidForLink}/${id}`
+      const url = `${window.location.origin}/#/ver/${uidForLink}/${id}`
       await navigator.clipboard.writeText(url)
       setLinkCopied(true)
       setTimeout(() => setLinkCopied(false), 3000)
@@ -303,28 +316,28 @@ export default function Presenter() {
             <SlideView slide={slide} c1={c1} c2={c2} c3={c3} revealCount={revealCount} settings={settings} />
           </div>
 
-          <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-4 py-3 pointer-events-none gap-2">
-            <div className="flex items-center gap-2 pointer-events-auto">
+          <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-2 sm:px-4 py-2 sm:py-3 pointer-events-none gap-1 sm:gap-2">
+            <div className="flex items-center gap-1 sm:gap-2 pointer-events-auto">
               {!sidebarOpen && (
-                <button onClick={(e) => { e.stopPropagation(); setSidebarOpen(true) }} className="text-xs bg-black/30 hover:bg-black/50 backdrop-blur px-3 py-1.5 rounded-full transition">☰ Slides</button>
+                <button onClick={(e) => { e.stopPropagation(); setSidebarOpen(true) }} className="text-xs bg-black/30 hover:bg-black/50 backdrop-blur px-2.5 sm:px-3 py-1.5 rounded-full transition">☰<span className="hidden sm:inline"> Slides</span></button>
               )}
               {!isPublic && (
-                <button onClick={(e) => { e.stopPropagation(); navigate(`/proposta/${id}/editar`) }} className="text-xs bg-black/30 hover:bg-black/50 backdrop-blur px-3 py-1.5 rounded-full transition">← Sair</button>
+                <button onClick={(e) => { e.stopPropagation(); navigate(`/proposta/${id}/editar`) }} className="text-xs bg-black/30 hover:bg-black/50 backdrop-blur px-2.5 sm:px-3 py-1.5 rounded-full transition">← <span className="hidden sm:inline">Sair</span></button>
               )}
             </div>
-            <div className="flex items-center gap-2 pointer-events-auto">
+            <div className="flex items-center gap-1 sm:gap-2 pointer-events-auto overflow-x-auto max-w-[70vw] sm:max-w-none">
               {!isPublic && (
                 <>
-                  <button onClick={(e) => { e.stopPropagation(); setEditing((v) => !v) }} className="text-xs bg-black/30 hover:bg-black/50 backdrop-blur px-3 py-1.5 rounded-full transition">{editing ? 'Fechar edição' : '✎ Editar slide'}</button>
-                  <button onClick={(e) => { e.stopPropagation(); handleCopyLink() }} className="text-xs bg-black/30 hover:bg-black/50 backdrop-blur px-3 py-1.5 rounded-full transition">
-                    {linkCopied ? 'Link copiado ✓' : '🔗 Link para o cliente'}
+                  <button onClick={(e) => { e.stopPropagation(); setEditing((v) => !v) }} className="text-xs bg-black/30 hover:bg-black/50 backdrop-blur px-2.5 sm:px-3 py-1.5 rounded-full transition shrink-0">✎<span className="hidden sm:inline"> {editing ? 'Fechar edição' : 'Editar slide'}</span></button>
+                  <button onClick={(e) => { e.stopPropagation(); handleCopyLink() }} className="text-xs bg-black/30 hover:bg-black/50 backdrop-blur px-2.5 sm:px-3 py-1.5 rounded-full transition shrink-0">
+                    🔗<span className="hidden sm:inline"> {linkCopied ? 'Link copiado ✓' : 'Link para o cliente'}</span>
                   </button>
                 </>
               )}
-              <button disabled={exporting} onClick={(e) => { e.stopPropagation(); handleExportPdf() }} className="text-xs bg-black/30 hover:bg-black/50 backdrop-blur px-3 py-1.5 rounded-full transition disabled:opacity-50">
-                {exporting ? `Gerando PDF… ${exportProgress}/${visibleSlides.length}` : '⇩ Baixar PDF'}
+              <button disabled={exporting} onClick={(e) => { e.stopPropagation(); handleExportPdf() }} className="text-xs bg-black/30 hover:bg-black/50 backdrop-blur px-2.5 sm:px-3 py-1.5 rounded-full transition disabled:opacity-50 shrink-0">
+                ⇩<span className="hidden sm:inline"> {exporting ? `Gerando PDF… ${exportProgress}/${visibleSlides.length}` : 'Baixar PDF'}</span>
               </button>
-              <div className="text-xs bg-black/30 backdrop-blur px-3 py-1.5 rounded-full">{index + 1} / {visibleSlides.length}</div>
+              <div className="text-xs bg-black/30 backdrop-blur px-2.5 sm:px-3 py-1.5 rounded-full shrink-0">{index + 1}/{visibleSlides.length}</div>
             </div>
           </div>
 
@@ -408,6 +421,7 @@ function getItemsLength(slide) {
   if (slide.type === 'pricingCalc') return (slide.items?.length || 0) + ((slide.hourValue || slide.dayValue) ? 1 : 0)
   // o valor + prazo do pacote é o 1º passo; os cards de pagamento vêm depois, um a um
   if (slide.type === 'packagePricing') return (slide.paymentCards?.length || 0) + 1
+  if (slide.type === 'packagesSummary') return slide.packages?.length || 0
   if (Array.isArray(slide.items)) return slide.items.length
   if (slide.type === 'stages') return slide.stages?.length || 0
   return 0
@@ -541,7 +555,7 @@ function ImagePositionPicker({ image, onChange }) {
   )
 }
 
-const COLOR_CUSTOMIZABLE_TYPES = new Set(['divider', 'agenda', 'profile', 'clientRequest', 'reasons', 'scopeSection', 'modeling', 'journeyFlow', 'stages', 'feedbacks', 'pricingCalc', 'packagePricing', 'custom', 'closing'])
+const COLOR_CUSTOMIZABLE_TYPES = new Set(['divider', 'agenda', 'profile', 'clientRequest', 'reasons', 'scopeSection', 'modeling', 'journeyFlow', 'stages', 'feedbacks', 'pricingCalc', 'packagePricing', 'packagesSummary', 'custom', 'closing'])
 
 function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALETTE, proposal, onSaveVideoScope, onSaveFields, onSaveVisibility }) {
   // padrão é "todas as propostas" apenas quando essa opção existe pro tipo de slide (allowGlobal);
@@ -617,23 +631,34 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
   }
 
   function save() {
-    const patch = slide.type === 'closing' ? { title, quote, author } : { title }
-    if (items) patch.items = items
-    if (slide.type === 'divider') { patch.subtitle = subtitle; patch.bgColor = bgColor; patch.textColor = textColor }
-    if (slide.type === 'journeyFlow') { patch.subtitle = subtitle; patch.stepImages = stepImages }
-    if (COLOR_CUSTOMIZABLE_TYPES.has(slide.type)) { patch.bgColor = bgColor; patch.textColor = textColor }
-    if (isMultiImage) { patch.images = images; patch.imageLayout = imageLayout; patch.image = null; patch.image2 = null; patch.description = description }
-    if (hasSingleImage) { patch.image = singleImage; patch.noImage = noImage; patch.imagePosition = imagePosition }
-    if (isCover) { patch.image = coverImage }
-    if (isClientRequest) { onSaveFields?.({ descricaoProjeto }) }
-    if (isStages) { patch.stages = stages; patch.footnote = footnote }
-    if (isReasons) { patch.items = reasonsList }
-    if (isFeedbacks) { patch.items = feedbacks }
     if (isVideo) {
       onSaveVideoScope?.(videoScope, { videoUrl: '', videoPath: '', embedUrl: toEmbedUrl(embedUrl) })
       onClose()
       return
     }
+
+    const patch = slide.type === 'closing' ? { title, quote, author } : { title }
+    if (items) patch.items = items
+    if (slide.type === 'divider') { patch.subtitle = subtitle; patch.bgColor = bgColor; patch.textColor = textColor }
+    if (slide.type === 'journeyFlow') { patch.subtitle = subtitle }
+    if (COLOR_CUSTOMIZABLE_TYPES.has(slide.type)) { patch.bgColor = bgColor; patch.textColor = textColor }
+    if (isClientRequest) { onSaveFields?.({ descricaoProjeto }) }
+    if (isStages) { patch.stages = stages; patch.footnote = footnote }
+    if (isReasons) { patch.items = reasonsList }
+    if (isFeedbacks) { patch.items = feedbacks }
+
+    // imagens SEMPRE são salvas só nesta proposta, mesmo quando o resto do slide está marcado
+    // como "todas as propostas" — o conteúdo compartilhado não tem onde guardar imagem por
+    // slide, e salvar como "global" fazia a imagem se perder silenciosamente. Essa era a causa
+    // do "às vezes funciona, às vezes não" ao trocar imagem/posição em Sobre mim, Motivos, Agenda e Jornada.
+    const imagePatch = {}
+    let hasImagePatch = false
+    if (isMultiImage) { Object.assign(imagePatch, { images, imageLayout, image: null, image2: null, description }); hasImagePatch = true }
+    if (hasSingleImage) { Object.assign(imagePatch, { image: singleImage, noImage, imagePosition }); hasImagePatch = true }
+    if (isCover) { Object.assign(imagePatch, { image: coverImage }); hasImagePatch = true }
+    if (slide.type === 'journeyFlow') { Object.assign(imagePatch, { stepImages }); hasImagePatch = true }
+    if (hasImagePatch) onSave(imagePatch, 'proposal')
+
     onSave(patch, scope)
     onClose()
   }
@@ -708,14 +733,14 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
 
       {slide.type === 'packagePricing' && (
         <div className="mb-4">
-          <label className="text-xs font-medium text-ink/70 block mb-1">Formas de pagamento a mostrar (só nesta proposta)</label>
+          <label className="text-xs font-medium text-ink/70 block mb-1">Formas de pagamento a mostrar neste pacote ({slide.title})</label>
           {[['cartao', 'Cartão de crédito (12x)'], ['prazo', 'Parcelado por prazo de projeto'], ['avista', 'À vista (com desconto)'], ['metade', 'Metade / Metade']].map(([id, label]) => {
-            const checked = proposal?.visibility?.payments?.[id] !== false
+            const checked = (proposal?.visibility?.paymentsByPackage?.[slide.packageId] ?? proposal?.visibility?.payments)?.[id] !== false
             return (
               <label key={id} className="flex items-center gap-2 text-sm mb-1.5 cursor-pointer">
                 <input
                   type="checkbox" checked={checked}
-                  onChange={() => onSaveVisibility?.({ payments: { [id]: !checked } })}
+                  onChange={() => onSaveVisibility?.({ payments: { [id]: !checked } }, slide.packageId)}
                 />
                 {label}
               </label>
@@ -1257,6 +1282,31 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
               {slide.dayValue && <PriceTag label="Diária de trabalho" value={slide.dayValue} radius={radius} c1={c1} big />}
             </Reveal>
           )}
+        </div>
+      )
+    }
+
+    case 'packagesSummary': {
+      const { bg, heading } = slideColors(slide, SAND)
+      return (
+        <div className="w-full h-full p-8 md:p-12 overflow-auto" style={{ background: bg }}>
+          <h2 className="text-2xl md:text-3xl mb-6 text-center" style={{ ...titleStyle, color: heading }}>{slide.title}</h2>
+          <div className={`grid grid-cols-1 ${slide.packages.length === 2 ? 'md:grid-cols-2' : 'md:grid-cols-3'} gap-4`}>
+            {slide.packages.map((pkg, i) => (
+              <Reveal key={pkg.id} i={i} revealCount={revealCount} className="bg-white border border-line p-5 flex flex-col" style={{ borderRadius: radius }}>
+                <div className="text-sm uppercase tracking-wide opacity-60 mb-1" style={{ color: heading }}>{pkg.label}</div>
+                <div className="text-2xl font-semibold mb-2" style={{ color: c1, fontFamily: STYLE.displayFont }}>{pkg.value}</div>
+                {pkg.schedule.length > 0 && <div className="text-xs mb-3" style={{ color: heading, opacity: 0.6 }}>{pkg.schedule.join(' · ')}</div>}
+                <div className="mt-auto pt-3 border-t border-line space-y-1">
+                  {pkg.paymentCards.map((p) => (
+                    <div key={p.id} className="text-[11px] flex justify-between gap-2" style={{ color: heading, opacity: 0.65 }}>
+                      <span>{p.label}</span><span className="shrink-0">{p.value}</span>
+                    </div>
+                  ))}
+                </div>
+              </Reveal>
+            ))}
+          </div>
         </div>
       )
     }

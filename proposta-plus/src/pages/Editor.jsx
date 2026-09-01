@@ -72,7 +72,7 @@ export default function Editor() {
 
         <div className="flex items-center gap-6 flex-wrap text-sm mt-3">
           <div className="flex items-center gap-2">
-            <label className="text-muted">📅 Data/hora da apresentação:</label>
+            <label className="text-muted">Proposta:</label>
             <input
               type="datetime-local"
               value={proposal.scheduledAt || ''}
@@ -85,7 +85,7 @@ export default function Editor() {
           </div>
           {proposal.status === 'aceita' && (
             <div className="flex items-center gap-2">
-              <label className="text-muted">📅 Data/hora da contratação:</label>
+              <label className="text-muted">Contrato:</label>
               <input
                 type="datetime-local"
                 value={proposal.contractedAt || ''}
@@ -256,16 +256,25 @@ function PricingVisibilityTab({ proposal, onChange }) {
   function togglePackage(id) {
     onChange({ visibility: { ...visibility, packages: { ...visibility.packages, [id]: !visibility.packages[id] } } })
   }
-  function togglePayment(id) {
-    onChange({ visibility: { ...visibility, payments: { ...visibility.payments, [id]: !visibility.payments[id] } } })
+  function paymentsFor(pkgId) {
+    return { ...DEFAULT_VISIBILITY.payments, ...(visibility.paymentsByPackage?.[pkgId] ?? visibility.payments) }
+  }
+  function togglePayment(pkgId, id) {
+    const current = paymentsFor(pkgId)
+    onChange({
+      visibility: {
+        ...visibility,
+        paymentsByPackage: { ...(visibility.paymentsByPackage || {}), [pkgId]: { ...current, [id]: !current[id] } },
+      },
+    })
   }
 
   return (
     <div className="max-w-xl space-y-8">
       <p className="text-sm text-muted">
-        Escolha quais pacotes e formas de pagamento aparecem nesta proposta. Um slide é criado para
-        cada pacote marcado (sempre na ordem Completo → Básico → Essencial), com as formas de
-        pagamento marcadas abaixo. Se um pacote não tiver valor preenchido nos dados, ele não aparece de qualquer forma.
+        Escolha quais pacotes aparecem nesta proposta, e quais formas de pagamento aparecem em cada um —
+        ocultar uma forma de pagamento em um pacote não afeta os outros. Se um pacote não tiver valor
+        preenchido nos dados, ele não aparece de qualquer forma.
       </p>
 
       <section>
@@ -277,15 +286,17 @@ function PricingVisibilityTab({ proposal, onChange }) {
         </div>
       </section>
 
-      <section>
-        <h3 className="font-medium text-ink mb-3">Formas de pagamento a mostrar (em cada pacote)</h3>
-        <div className="space-y-2">
-          <ToggleRow label="Cartão de crédito (12x)" checked={visibility.payments.cartao} onToggle={() => togglePayment('cartao')} />
-          <ToggleRow label="Parcelado por prazo de projeto" checked={visibility.payments.prazo} onToggle={() => togglePayment('prazo')} />
-          <ToggleRow label="À vista (com desconto)" checked={visibility.payments.avista} onToggle={() => togglePayment('avista')} />
-          <ToggleRow label="Metade / Metade" checked={visibility.payments.metade} onToggle={() => togglePayment('metade')} />
-        </div>
-      </section>
+      {PACKAGE_LIST.filter((p) => visibility.packages[p.id]).map((p) => (
+        <section key={p.id}>
+          <h3 className="font-medium text-ink mb-3">Formas de pagamento — Pacote {p.label}</h3>
+          <div className="space-y-2">
+            <ToggleRow label="Cartão de crédito (12x)" checked={paymentsFor(p.id).cartao} onToggle={() => togglePayment(p.id, 'cartao')} />
+            <ToggleRow label="Parcelado por prazo de projeto" checked={paymentsFor(p.id).prazo} onToggle={() => togglePayment(p.id, 'prazo')} />
+            <ToggleRow label="À vista (com desconto)" checked={paymentsFor(p.id).avista} onToggle={() => togglePayment(p.id, 'avista')} />
+            <ToggleRow label="Metade / Metade" checked={paymentsFor(p.id).metade} onToggle={() => togglePayment(p.id, 'metade')} />
+          </div>
+        </section>
+      ))}
     </div>
   )
 }
