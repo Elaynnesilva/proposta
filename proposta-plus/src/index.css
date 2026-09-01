@@ -44,6 +44,19 @@ body {
   animation: autoFromLeft 0.55s ease forwards;
 }
 
+/* usado só na área invisível de captura do PDF: força o estado final de todas as
+   animações/transições de texto, para o html2canvas nunca "fotografar" um texto
+   no meio do caminho (opacidade baixa, deslocado) — sem isso, textos podiam sair
+   quase invisíveis ou faltando no PDF baixado */
+.pdf-export-mode .reveal-item,
+.pdf-export-mode .auto-left-item,
+.pdf-export-mode .auto-fade-item {
+  opacity: 1 !important;
+  transform: none !important;
+  animation: none !important;
+  transition: none !important;
+}
+
 @media print {
   .no-print { display: none !important; }
 }

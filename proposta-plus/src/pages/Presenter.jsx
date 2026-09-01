@@ -373,7 +373,7 @@ export default function Presenter() {
 
       {/* área invisível usada só para "fotografar" cada slide na hora de gerar o PDF */}
       <div style={{ position: 'fixed', left: -99999, top: 0, width: EXPORT_W, height: EXPORT_H, overflow: 'hidden' }}>
-        <div ref={exportRef} style={{ width: EXPORT_W, height: EXPORT_H }}>
+        <div ref={exportRef} className="pdf-export-mode" style={{ width: EXPORT_W, height: EXPORT_H }}>
           {exporting && visibleSlides[exportIndex] && (
             <SlideView slide={visibleSlides[exportIndex]} c1={c1} c2={c2} c3={c3} revealCount={999} settings={settings} exportMode />
           )}
@@ -1523,7 +1523,7 @@ function JourneyFlowSlide({ slide, c1, c2, t2, revealCount, radius }) {
               className="flex flex-col items-start justify-center px-4 py-3 min-w-[180px] max-w-[220px] overflow-hidden"
               style={{ borderRadius: radius, background: i % 2 === 0 ? c2 : 'white', color: i % 2 === 0 ? t2 : '#28313C', border: i % 2 === 0 ? 'none' : '1px solid #E4DFD6', boxShadow: '0 4px 14px rgba(0,0,0,0.06)' }}
             >
-              <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold mb-2" style={{ background: c1, color: readableTextColor(c1) }}>{i + 1}</div>
+              <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold leading-none mb-2 shrink-0" style={{ background: c1, color: readableTextColor(c1) }}><span className="translate-y-px">{i + 1}</span></div>
               <div className="text-base leading-snug mb-2">{it}</div>
               {stepImages[i] && <img src={stepImages[i]} alt="" className="w-full h-20 object-cover rounded-md" />}
             </div>
@@ -1556,9 +1556,11 @@ function PriceTag({ label, value, radius, c1, big }) {
  */
 function SplitLayout({ image, radius, imageRight = false, imagePosition, noImage, bg, children }) {
   if (noImage) {
+    // sem imagem: o bloco de texto fica na lateral esquerda da página (não centralizado),
+    // verticalmente centralizado para não colar no topo em slides com pouco conteúdo
     return (
-      <div className="w-full h-full overflow-auto" style={{ background: bg || SAND }}>
-        <div className="p-10 md:p-16 max-w-2xl mx-auto">{children}</div>
+      <div className="w-full h-full overflow-auto flex items-center" style={{ background: bg || SAND }}>
+        <div className="p-10 md:p-16 max-w-2xl">{children}</div>
       </div>
     )
   }
@@ -1579,10 +1581,15 @@ function SplitLayout({ image, radius, imageRight = false, imagePosition, noImage
 }
 
 /**
- * Layout usado nas seções de escopo e na modelagem 3D: título centralizado no topo,
- * tópicos à esquerda logo abaixo (aparecem juntos, sem clique), e as imagens embaixo,
- * lado a lado ou em grade — cada uma aparecendo a um clique, na ordem em que foram
- * adicionadas. Sem imagem nenhuma, o texto ocupa o espaço todo de um jeito mais legível.
+ * Layout usado nas seções de escopo e na modelagem 3D. Usa CSS Grid (em vez de flexbox
+ * com altura em %) porque flex-basis em porcentagem dentro de colunas aninhadas é frágil
+ * e foi a causa da foto de "Plantas Principais" aparecer gigante, por cima do título —
+ * o Grid reserva a altura de cada linha antes de desenhar o conteúdo, então a área das
+ * imagens nunca "estoura" por cima do título/tópicos.
+ *
+ * Com imagem: título centralizado no topo, tópicos empilhados à esquerda logo abaixo,
+ * e as imagens numa faixa reservada mais abaixo, com um espaço bom entre elas e os tópicos.
+ * Sem imagem nenhuma: título e tópicos ficam justificados à esquerda (não centralizados).
  */
 function TopicImageSlide({ slide, c1, revealCount, radius }) {
   const imgs = effectiveImages(slide)
@@ -1591,30 +1598,55 @@ function TopicImageSlide({ slide, c1, revealCount, radius }) {
   const { bg, heading, titleColor } = slideColors(slide, SAND, c1)
 
   return (
-    <div className="w-full h-full p-8 md:p-14 overflow-hidden flex flex-col" style={{ background: bg }}>
-      <h2 className="text-center text-2xl md:text-3xl mb-4 shrink-0" style={{ ...titleStyle, color: titleColor }}>{slide.title}</h2>
-      {slide.description && (
-        <p className="text-center max-w-2xl mx-auto mb-6 shrink-0" style={{ color: heading, opacity: 0.7 }}>{slide.description}</p>
-      )}
+    <div
+      className="w-full h-full p-8 md:p-14 overflow-hidden"
+      style={{
+        background: bg,
+        display: 'grid',
+        gridTemplateRows: hasImages ? 'auto auto minmax(0, 1fr)' : 'auto auto',
+        rowGap: hasImages ? '2.5rem' : '1.5rem',
+      }}
+    >
+      <div>
+        <h2
+          className={`text-2xl md:text-3xl ${hasImages ? 'text-center' : 'text-left'}`}
+          style={{ ...titleStyle, color: titleColor }}
+        >
+          {slide.title}
+        </h2>
+        {slide.description && (
+          <p
+            className={`mt-3 ${hasImages ? 'text-center max-w-2xl mx-auto' : 'text-left max-w-2xl'}`}
+            style={{ color: heading, opacity: 0.7 }}
+          >
+            {slide.description}
+          </p>
+        )}
+      </div>
 
-      {/* tópicos sempre empilhados, um abaixo do outro — nunca lado a lado */}
-      <div className={`shrink-0 space-y-2 mb-10 ${hasImages ? 'max-w-xl' : 'max-w-3xl mx-auto w-full text-center'}`}>
+      {/* tópicos sempre empilhados, um abaixo do outro, e sempre justificados à esquerda */}
+      <div className={`space-y-2 ${hasImages ? 'max-w-xl' : 'max-w-2xl'}`}>
         {slide.items.map((it, i) => (
-          <div key={i} className="auto-left-item flex items-start gap-2" style={{ animationDelay: `${i * 40}ms`, color: heading, opacity: 0.85, justifyContent: hasImages ? 'flex-start' : 'center' }}>
+          <div key={i} className="auto-left-item flex items-start gap-2 text-left" style={{ animationDelay: `${i * 40}ms`, color: heading, opacity: 0.85 }}>
             <span style={{ color: c1 }}>●</span><span>{it}</span>
           </div>
         ))}
       </div>
 
-      {/* área reservada para as imagens: tamanho fixo (no máximo ~44% da altura, nunca mais
-          que isso — maxHeight garante que não "estoure" por cima do título/tópicos), então
-          o slide nunca cresce além da tela nem as fotos ficam grandes demais */}
+      {/* faixa das imagens: a altura dessa linha do grid já vem definida (o que resta da
+          tela), então as fotos nunca crescem além dela nem ficam por cima do resto */}
       {hasImages && (
-        <div className="min-h-0" style={{ flex: '0 1 44%', maxHeight: '44%' }}>
+        <div className="min-h-0 flex items-center justify-center">
           {layout === 'grid' ? (
-            <div className="grid grid-cols-2 gap-6 justify-items-center content-center" style={{ maxHeight: '100%' }}>
+            <div
+              className="grid gap-4 h-full w-full max-w-3xl mx-auto"
+              style={{
+                gridTemplateColumns: `repeat(${Math.min(imgs.length, 2)}, 1fr)`,
+                gridTemplateRows: `repeat(${Math.ceil(imgs.length / 2)}, 1fr)`,
+              }}
+            >
               {imgs.map((img, i) => (
-                <div key={i} className="relative overflow-hidden bg-[#DDD6C8] w-full" style={{ borderRadius: radius, aspectRatio: RATIO_CSS[img.ratio] || '1 / 1', maxHeight: '100%' }}>
+                <div key={i} className="relative overflow-hidden bg-[#DDD6C8]" style={{ borderRadius: radius }}>
                   <Reveal i={i} revealCount={revealCount} className="absolute inset-0">
                     <SlideImage src={img.url} className="w-full h-full" style={{ objectPosition: `${img.posX ?? 50}% ${img.posY ?? 50}%` }} />
                   </Reveal>
@@ -1622,9 +1654,13 @@ function TopicImageSlide({ slide, c1, revealCount, radius }) {
               ))}
             </div>
           ) : (
-            <div className="flex gap-6 h-full justify-center">
+            <div className="flex gap-6 h-full items-center justify-center w-full">
               {imgs.map((img, i) => (
-                <div key={i} className="relative overflow-hidden bg-[#DDD6C8]" style={{ borderRadius: radius, aspectRatio: RATIO_CSS[img.ratio] || '1 / 1', maxHeight: '100%', maxWidth: '48%' }}>
+                <div
+                  key={i}
+                  className="relative overflow-hidden bg-[#DDD6C8] h-full"
+                  style={{ borderRadius: radius, aspectRatio: RATIO_CSS[img.ratio] || '1 / 1', maxWidth: imgs.length === 1 ? '60%' : `${88 / imgs.length}%` }}
+                >
                   <Reveal i={i} revealCount={revealCount} className="absolute inset-0">
                     <SlideImage src={img.url} className="w-full h-full" style={{ objectPosition: `${img.posX ?? 50}% ${img.posY ?? 50}%` }} />
                   </Reveal>
