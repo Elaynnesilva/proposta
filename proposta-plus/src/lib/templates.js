@@ -62,3 +62,10 @@ export function contrastRatio(hexA, hexB) {
 export function isLowContrast(textHex, bgHex) {
   return contrastRatio(textHex, bgHex) < 4.5
 }
+
+/** mesma ideia, mas com o limite mais permissivo do WCAG pra texto grande/negrito (~3.0) —
+ *  usada só pra decidir a cor de destaque dos títulos (sempre grandes e em negrito), pra ela
+ *  não cair no fallback (mesma cor do texto do corpo) só por passar raspando do limite normal */
+export function isLowContrastLarge(textHex, bgHex) {
+  return contrastRatio(textHex, bgHex) < 3
+}

@@ -48,7 +48,33 @@ export default function Presenter() {
   const [exportProgress, setExportProgress] = useState(0)
   const [exportIndex, setExportIndex] = useState(0)
   const [linkCopied, setLinkCopied] = useState(false)
+  const [isFullscreen, setIsFullscreen] = useState(false)
   const exportRef = useRef(null)
+  const mobileSlideRef = useRef(null)
+
+  // tela cheia no mobile: usa a Fullscreen API de verdade (esconde a barra do navegador) e
+  // tenta travar a orientação em paisagem — se o navegador não permitir (iOS Safari não tem
+  // Fullscreen API em elementos comuns), cai num modo "tela cheia" só via CSS mesmo assim,
+  // então o botão sempre funciona, ele só não esconde a barra do navegador nesses casos
+  async function toggleMobileFullscreen() {
+    if (!isFullscreen) {
+      setIsFullscreen(true)
+      try { await mobileSlideRef.current?.requestFullscreen?.() } catch { /* segue no modo CSS */ }
+      try { await screen.orientation?.lock?.('landscape') } catch { /* navegador não suporta, tudo bem */ }
+    } else {
+      try { if (document.fullscreenElement) await document.exitFullscreen?.() } catch { /* ignora */ }
+      try { screen.orientation?.unlock?.() } catch { /* ignora */ }
+      setIsFullscreen(false)
+    }
+  }
+
+  useEffect(() => {
+    function onFsChange() {
+      if (!document.fullscreenElement) setIsFullscreen(false)
+    }
+    document.addEventListener('fullscreenchange', onFsChange)
+    return () => document.removeEventListener('fullscreenchange', onFsChange)
+  }, [])
 
   useEffect(() => {
     if (isPublic) {
@@ -303,7 +329,82 @@ export default function Presenter() {
 
   return (
     <div className="fixed inset-0 bg-ink text-white select-none" style={{ ...cssVars, fontFamily: STYLE.bodyFont }}>
-      <div className="flex h-full">
+
+      {/* ============ MOBILE (abaixo de "sm"): tela empilhada ============
+          tela do slide fixa no topo, ícones fixos logo abaixo, e a lista de slides
+          (ou o painel de edição, no lugar dela) preenchendo o resto, rolável. */}
+      <div className="sm:hidden h-full flex flex-col">
+        <div
+          ref={mobileSlideRef}
+          className={isFullscreen ? 'relative shrink-0 bg-ink w-full h-full' : 'relative shrink-0 bg-ink'}
+          style={isFullscreen ? {} : { height: '38vh', minHeight: 220 }}
+        >
+          <div className="absolute inset-0 cursor-pointer" onClick={handleAdvance}>
+            <SlideView slide={slide} c1={c1} c2={c2} c3={c3} revealCount={revealCount} settings={settings} />
+          </div>
+          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5 pointer-events-none">
+            {visibleSlides.map((s, i) => (
+              <div key={s.id} className="h-1.5 rounded-full transition-all" style={{ width: i === index ? 22 : 6, background: i === index ? c1 : 'rgba(255,255,255,0.35)' }} />
+            ))}
+          </div>
+          <button onClick={(e) => { e.stopPropagation(); goPrev() }} className="absolute left-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/25 flex items-center justify-center">‹</button>
+          <button onClick={(e) => { e.stopPropagation(); handleAdvance() }} className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/25 flex items-center justify-center">›</button>
+          <div className="absolute top-2 right-2 flex items-center gap-1.5">
+            <div className="text-[11px] bg-black/40 backdrop-blur px-2 py-1 rounded-full">{index + 1}/{visibleSlides.length}</div>
+            <button onClick={(e) => { e.stopPropagation(); toggleMobileFullscreen() }} className="text-[11px] bg-black/40 backdrop-blur w-7 h-7 rounded-full flex items-center justify-center" title="Preencher tela">{isFullscreen ? '⤡' : '⤢'}</button>
+          </div>
+          {isFullscreen && (
+            <button onClick={(e) => { e.stopPropagation(); toggleMobileFullscreen() }} className="absolute top-2 left-2 text-[11px] bg-black/40 backdrop-blur px-2.5 py-1.5 rounded-full">✕ Sair</button>
+          )}
+        </div>
+
+        {!isFullscreen && (
+          <>
+            <div className="shrink-0 flex items-center gap-2 px-3 py-2 bg-[#1c232b] border-b border-white/10 overflow-x-auto">
+              {!isPublic && (
+                <button onClick={() => navigate(`/proposta/${id}/editar`)} className="text-xs bg-white/10 px-3 py-1.5 rounded-full shrink-0">← Sair</button>
+              )}
+              {!isPublic && (
+                <button onClick={() => setEditing((v) => !v)} className="text-xs px-3 py-1.5 rounded-full shrink-0 transition" style={{ background: editing ? c1 : 'rgba(255,255,255,.1)' }}>✎ {editing ? 'Fechar edição' : 'Editar slide'}</button>
+              )}
+              {!isPublic && (
+                <button onClick={handleCopyLink} className="text-xs bg-white/10 px-3 py-1.5 rounded-full shrink-0">🔗 {linkCopied ? 'Copiado ✓' : 'Link'}</button>
+              )}
+              <button disabled={exporting} onClick={handleExportPdf} className="text-xs bg-white/10 px-3 py-1.5 rounded-full shrink-0 disabled:opacity-50">⇩ {exporting ? `Gerando… ${exportProgress}/${visibleSlides.length}` : 'Baixar PDF'}</button>
+            </div>
+
+            <div className="flex-1 min-h-0 overflow-y-auto bg-[#1c232b]">
+              {editing && slide ? (
+                <EditPanel
+                  embedded
+                  slide={slide}
+                  palette={palette}
+                  proposal={proposal}
+                  allowGlobal={GLOBAL_EDITABLE_SLIDES.has(slide.id)}
+                  onSave={(patch, scope) => { scope === 'global' ? saveGlobalContent(slide.id, patch) : saveOverridePerProposal(slide.id, patch) }}
+                  onSaveVideoScope={(scope, patch) => saveVideoByScope(scope, patch)}
+                  onSaveFields={saveFieldsPatch}
+                  onSaveVisibility={saveVisibilityPatch}
+                  onClose={() => setEditing(false)}
+                />
+              ) : (
+                <SlideSidebar
+                  embedded
+                  slides={isPublic ? visibleSlides : slides}
+                  currentId={slide?.id}
+                  hiddenIds={hiddenIds}
+                  onJump={jumpToId}
+                  onToggleHidden={isPublic ? null : toggleHidden}
+                  onReorder={isPublic ? null : reorder}
+                />
+              )}
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* ============ DESKTOP ("sm" pra cima): layout original lado a lado ============ */}
+      <div className="hidden sm:flex h-full">
         {sidebarOpen && (
           <SlideSidebar
             slides={isPublic ? visibleSlides : slides}
@@ -443,16 +544,18 @@ const RATIO_CSS = { '1:1': '1 / 1', '4:5': '4 / 5', '5:4': '5 / 4', '9:16': '9 /
 
 /* ---------------- BARRA LATERAL DE SLIDES ---------------- */
 
-function SlideSidebar({ slides, currentId, hiddenIds, onJump, onToggleHidden, onReorder, onClose }) {
+function SlideSidebar({ slides, currentId, hiddenIds, onJump, onToggleHidden, onReorder, onClose, embedded = false }) {
   const dragFrom = useRef(null)
   const canManage = !!onReorder
 
   return (
-    <div className="w-56 shrink-0 bg-[#1c232b] border-r border-white/10 flex flex-col">
-      <div className="flex items-center justify-between px-3 py-3 border-b border-white/10">
-        <span className="text-xs uppercase tracking-wide text-white/50">Slides</span>
-        <button onClick={onClose} className="text-white/50 hover:text-white text-xs">ocultar ✕</button>
-      </div>
+    <div className={embedded ? 'w-full h-full bg-[#1c232b] flex flex-col' : 'w-56 shrink-0 bg-[#1c232b] border-r border-white/10 flex flex-col'}>
+      {!embedded && (
+        <div className="flex items-center justify-between px-3 py-3 border-b border-white/10">
+          <span className="text-xs uppercase tracking-wide text-white/50">Slides</span>
+          <button onClick={onClose} className="text-white/50 hover:text-white text-xs">ocultar ✕</button>
+        </div>
+      )}
       <div className="flex-1 overflow-y-auto py-2">
         {slides.map((s, i) => {
           const hidden = hiddenIds.has(s.id)
@@ -562,7 +665,7 @@ function ImagePositionPicker({ image, onChange }) {
 
 const COLOR_CUSTOMIZABLE_TYPES = new Set(['divider', 'agenda', 'profile', 'clientRequest', 'reasons', 'scopeSection', 'modeling', 'journeyFlow', 'stages', 'feedbacks', 'pricingCalc', 'packagePricing', 'packagesSummary', 'custom', 'closing'])
 
-function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALETTE, proposal, onSaveVideoScope, onSaveFields, onSaveVisibility }) {
+function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALETTE, proposal, onSaveVideoScope, onSaveFields, onSaveVisibility, embedded = false }) {
   // padrão é "todas as propostas" apenas quando essa opção existe pro tipo de slide (allowGlobal);
   // do contrário, o escopo é sempre "só esta proposta" — bug crítico corrigido aqui: antes disso,
   // slides sem a opção de escopo (título, imagens, vídeo…) tentavam salvar como "global" por engano
@@ -601,6 +704,13 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
     acc[pkg.id] = { ...(slide.packageExtras?.[pkg.id] || {}) }
     return acc
   }, {}))
+  // os tópicos de "o que está incluso" são os mesmos que já aparecem no card de cada pacote
+  // (slide.packages[].benefits, que vêm dos campos "Benefícios do pacote" de cada pacote) —
+  // editar aqui atualiza os mesmos campos, então o que a pessoa vê é sempre o que pode editar
+  const [packageBenefits, setPackageBenefits] = useState(() => (slide.packages || []).reduce((acc, pkg) => {
+    acc[pkg.id] = (pkg.benefits || []).join('\n')
+    return acc
+  }, {}))
   const isVideo = slide.type === 'video'
   const [embedUrl, setEmbedUrl] = useState(slide.embedUrl || '')
   const [videoScope, setVideoScope] = useState('proposal')
@@ -627,6 +737,10 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
     setObjetivoProjeto(slide.objetivoProjeto || '')
     setPackageExtras((slide.packages || []).reduce((acc, pkg) => {
       acc[pkg.id] = { ...(slide.packageExtras?.[pkg.id] || {}) }
+      return acc
+    }, {}))
+    setPackageBenefits((slide.packages || []).reduce((acc, pkg) => {
+      acc[pkg.id] = (pkg.benefits || []).join('\n')
       return acc
     }, {}))
     setStages(slide.stages ? JSON.parse(JSON.stringify(slide.stages)) : [])
@@ -657,7 +771,16 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
     if (slide.type === 'journeyFlow') { patch.subtitle = subtitle }
     if (COLOR_CUSTOMIZABLE_TYPES.has(slide.type)) { patch.bgColor = bgColor; patch.textColor = textColor }
     if (isClientRequest) { onSaveFields?.({ objetivoProjeto }) }
-    if (isPackagesSummary) { onSave({ packageExtras }, 'proposal') }
+    if (isPackagesSummary) {
+      onSave({ packageExtras }, 'proposal')
+      // os tópicos editados aqui são os mesmos campos "Benefícios do pacote" usados nos
+      // cards de cada pacote — salvar aqui atualiza os dois lugares de uma vez
+      const beneficiosPatch = {}
+      Object.entries(packageBenefits).forEach(([pkgId, text]) => {
+        beneficiosPatch[`beneficios${pkgId.charAt(0).toUpperCase()}${pkgId.slice(1)}`] = text
+      })
+      onSaveFields?.(beneficiosPatch)
+    }
     if (isStages) { patch.stages = stages; patch.footnote = footnote }
     if (isReasons) { patch.items = reasonsList }
     if (isFeedbacks) { patch.items = feedbacks }
@@ -679,7 +802,7 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
   }
 
   return (
-    <div className="no-print absolute top-0 right-0 h-full w-full sm:w-96 bg-white text-ink shadow-2xl p-5 overflow-y-auto z-30" onClick={(e) => e.stopPropagation()}>
+    <div className={embedded ? 'no-print w-full h-full bg-white text-ink p-4 overflow-y-auto' : 'no-print absolute top-0 right-0 h-full w-full sm:w-96 bg-white text-ink shadow-2xl p-5 overflow-y-auto z-30'} onClick={(e) => e.stopPropagation()}>
       <div className="flex items-center justify-between mb-4">
         <h3 className="font-medium">Editar este slide</h3>
         <button onClick={onClose} className="text-muted text-sm">✕</button>
@@ -743,10 +866,20 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
                     reader.readAsDataURL(file)
                   }} />
                 </label>
+                <label className="text-xs font-medium text-ink/70 block mb-1">O que está incluso neste pacote (um tópico por linha)</label>
+                <textarea
+                  value={packageBenefits[pkg.id] || ''}
+                  onChange={(e) => setPackageBenefits((prev) => ({ ...prev, [pkg.id]: e.target.value }))}
+                  placeholder={'Estudo e criação do projeto\nImagens realistas 3D\n...'}
+                  rows={4}
+                  className="w-full text-xs p-2 rounded border border-line outline-none focus:border-clay mb-2"
+                />
+                <p className="text-[11px] text-muted mb-2">Isso atualiza os mesmos tópicos do card "{pkg.label}" nos pacotes.</p>
+                <label className="text-xs font-medium text-ink/70 block mb-1">Texto extra (opcional, aparece embaixo da foto)</label>
                 <textarea
                   value={extra.description || ''}
                   onChange={(e) => setPackageExtras((prev) => ({ ...prev, [pkg.id]: { ...prev[pkg.id], description: e.target.value } }))}
-                  placeholder="O que está incluso neste pacote…"
+                  placeholder="Uma observação extra sobre este pacote…"
                   rows={2}
                   className="w-full text-xs p-2 rounded border border-line outline-none focus:border-clay"
                 />
@@ -1140,15 +1273,46 @@ const titleStyle = { fontFamily: STYLE.displayFont, fontWeight: STYLE.headingWei
 const SAND = '#F6F3EE'
 const INK = '#28313C'
 
+function hexToRgb(hex) {
+  const c = (hex || '#000000').replace('#', '')
+  return [parseInt(c.substring(0, 2), 16) || 0, parseInt(c.substring(2, 4), 16) || 0, parseInt(c.substring(4, 6), 16) || 0]
+}
+function rgbToHex(r, g, b) {
+  const h = (n) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, '0')
+  return `#${h(r)}${h(g)}${h(b)}`
+}
+
+/** Cor do título: sempre tenta a cor de destaque da paleta (pra nunca ficar igual ao texto
+ *  do corpo). Se essa cor não tiver contraste suficiente contra o fundo, ajusta o brilho dela
+ *  (mantendo o tom) até ficar legível, em vez de simplesmente cair pra mesma cor neutra do
+ *  resto do texto — assim o título sempre se destaca visualmente. */
+function titleColorFor(c1, bg) {
+  const fallback = readableTextColor(bg)
+  if (!c1) return fallback
+  if (!isLowContrast(c1, bg)) return c1
+  // tenta escurecer (ou clarear, se o fundo for escuro) mantendo o tom; se ainda assim não
+  // bastar (tom muito perto do fundo), tenta a direção oposta antes de desistir e cair pro
+  // neutro — assim o título quase sempre continua com a cor de destaque da paleta
+  const tryDirection = (darken) => {
+    let [r, g, b] = hexToRgb(c1)
+    for (let i = 0; i < 14; i++) {
+      r += darken ? -20 : 20; g += darken ? -20 : 20; b += darken ? -20 : 20
+      const candidate = rgbToHex(r, g, b)
+      if (!isLowContrast(candidate, bg)) return candidate
+    }
+    return null
+  }
+  const primary = fallback === '#1A1A1A'
+  return tryDirection(primary) || tryDirection(!primary) || fallback
+}
+
 /** Resolve a cor de fundo e a cor de texto (contraste garantido) de um slide, considerando
  *  a personalização que a pessoa escolheu no "Editar slide" (com um fundo padrão de reserva). */
 function slideColors(slide, fallbackBg, c1) {
   const bg = slide.bgColor || fallbackBg
   const auto = readableTextColor(bg)
   const heading = slide.textColor && !isLowContrast(slide.textColor, bg) ? slide.textColor : auto
-  // o título sempre tenta usar a cor de destaque da paleta pra se diferenciar do resto do
-  // texto; só cai pra cor neutra se o destaque não tiver contraste suficiente sobre o fundo
-  const titleColor = c1 && !isLowContrast(c1, bg) ? c1 : heading
+  const titleColor = titleColorFor(c1, bg)
   return { bg, heading, titleColor }
 }
 
@@ -1366,7 +1530,7 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
                       {pkg.benefits.map((b, k) => <li key={k}>• {b}</li>)}
                     </ul>
                   )}
-                  {extra?.image && <img src={extra.image} alt="" className="w-full object-cover rounded-lg mb-3" style={{ aspectRatio: '5 / 4', objectPosition: `${extra.posX ?? 50}% ${extra.posY ?? 50}%` }} />}
+                  {extra?.image && <img src={extra.image} alt="" className="w-full object-cover rounded-lg mb-3" style={{ height: '110px', objectPosition: `${extra.posX ?? 50}% ${extra.posY ?? 50}%` }} />}
                   {extra?.description && <div className="text-sm mt-auto pt-2" style={{ color: heading, opacity: 0.8 }}>{extra.description}</div>}
                 </Reveal>
               )
@@ -1565,10 +1729,10 @@ function SplitLayout({ image, radius, imageRight = false, imagePosition, noImage
     )
   }
   const onRight = imagePosition ? imagePosition === 'right' : imageRight
-  // o texto fica alinhado à esquerda dentro do bloco, mas o bloco em si é centralizado
-  // verticalmente e horizontalmente na sua metade da página
+  // o bloco de texto fica centralizado verticalmente na sua metade da página, mas encostado
+  // à esquerda (não centralizado horizontalmente) — "centralizado à esquerda"
   const text = (
-    <div className="p-10 md:p-16 flex flex-col justify-center items-center overflow-auto" style={{ background: bg || SAND }}>
+    <div className="p-10 md:p-16 flex flex-col justify-center items-start overflow-auto" style={{ background: bg || SAND }}>
       <div className="max-w-md w-full">{children}</div>
     </div>
   )
@@ -1634,40 +1798,39 @@ function TopicImageSlide({ slide, c1, revealCount, radius }) {
       </div>
 
       {/* faixa das imagens: a altura dessa linha do grid já vem definida (o que resta da
-          tela), então as fotos nunca crescem além dela nem ficam por cima do resto */}
+          tela), então as fotos nunca crescem além dela nem ficam por cima do resto.
+          Cada foto respeita o formato escolhido (1:1, 4:5, 16:9...) e nunca ultrapassa
+          o espaço da sua célula — com muitas fotos, quebra em grade (3 em cima, 3 embaixo). */}
       {hasImages && (
         <div className="min-h-0 flex items-center justify-center">
-          {layout === 'grid' ? (
-            <div
-              className="grid gap-4 h-full w-full max-w-3xl mx-auto"
-              style={{
-                gridTemplateColumns: `repeat(${Math.min(imgs.length, 2)}, 1fr)`,
-                gridTemplateRows: `repeat(${Math.ceil(imgs.length / 2)}, 1fr)`,
-              }}
-            >
-              {imgs.map((img, i) => (
-                <div key={i} className="relative overflow-hidden bg-[#DDD6C8]" style={{ borderRadius: radius }}>
-                  <Reveal i={i} revealCount={revealCount} className="absolute inset-0">
-                    <SlideImage src={img.url} className="w-full h-full" style={{ objectPosition: `${img.posX ?? 50}% ${img.posY ?? 50}%` }} />
-                  </Reveal>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="flex gap-6 h-full items-center justify-center w-full">
-              {imgs.map((img, i) => (
-                <div
-                  key={i}
-                  className="relative overflow-hidden bg-[#DDD6C8] h-full"
-                  style={{ borderRadius: radius, aspectRatio: RATIO_CSS[img.ratio] || '1 / 1', maxWidth: imgs.length === 1 ? '60%' : `${88 / imgs.length}%` }}
-                >
-                  <Reveal i={i} revealCount={revealCount} className="absolute inset-0">
-                    <SlideImage src={img.url} className="w-full h-full" style={{ objectPosition: `${img.posX ?? 50}% ${img.posY ?? 50}%` }} />
-                  </Reveal>
-                </div>
-              ))}
-            </div>
-          )}
+          <div
+            className="grid gap-4 place-items-center w-full h-full"
+            style={(() => {
+              const n = imgs.length
+              // "lado a lado" é sempre uma única fileira; "grade" nunca passa de 3 fotos por
+              // fileira (3 em cima, 3 embaixo, etc.), como pedido — assim nunca fica apertado
+              const cols = layout === 'row' ? n : Math.min(n, 3)
+              const rows = Math.ceil(n / cols)
+              return { gridTemplateColumns: `repeat(${cols}, 1fr)`, gridTemplateRows: `repeat(${rows}, 1fr)` }
+            })()}
+          >
+            {imgs.map((img, i) => (
+              <div
+                key={i}
+                className="relative overflow-hidden bg-[#DDD6C8]"
+                // altura 100% (definida pela célula do grid) + aspect-ratio calcula a largura a
+                // partir dela — isso é o que faz o formato (1:1, 4:5, 16:9...) ser respeitado de
+                // forma confiável; antes, com largura E altura em "auto", o formato podia não
+                // fazer efeito nenhum (a caixa colapsava, já que a foto em si é posicionada como
+                // absolute e não "empurra" o tamanho do elemento pai)
+                style={{ borderRadius: radius, aspectRatio: RATIO_CSS[img.ratio] || '1 / 1', height: '100%', maxWidth: '100%' }}
+              >
+                <Reveal i={i} revealCount={revealCount} className="absolute inset-0">
+                  <SlideImage src={img.url} className="w-full h-full" style={{ objectPosition: `${img.posX ?? 50}% ${img.posY ?? 50}%` }} />
+                </Reveal>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>
