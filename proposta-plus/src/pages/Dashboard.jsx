@@ -82,6 +82,8 @@ export default function Dashboard() {
   const filteredProposals = useMemo(() => {
     const q = search.trim().toLowerCase()
     return proposals.filter((p) => {
+      // rascunho vazio (recém-criado, sem nenhum dado preenchido ainda) não aparece na lista
+      if ((p.status || 'rascunho') === 'rascunho' && !hasAnyProjectData(p)) return false
       if (filterTipologia !== 'todas' && p.tipologia !== filterTipologia) return false
       if (filterStatus !== 'todas' && p.status !== filterStatus) return false
       if (q && !(p.name || '').toLowerCase().includes(q) && !(p.fields?.nomeCliente || '').toLowerCase().includes(q)) return false
@@ -255,6 +257,12 @@ function formatProposalDate(p) {
   const created = p.createdAt?.toDate ? p.createdAt.toDate() : (p.createdAt?.seconds ? new Date(p.createdAt.seconds * 1000) : null)
   if (created) return `Criada em ${created.toLocaleDateString('pt-BR')}`
   return ''
+}
+
+/** Um rascunho só deve aparecer na lista se a pessoa já começou a preencher alguma coisa */
+function hasAnyProjectData(p) {
+  const fields = p.fields || {}
+  return Object.values(fields).some((v) => String(v || '').trim() !== '')
 }
 
 function AcceptValueForm({ defaultValue, onConfirm }) {

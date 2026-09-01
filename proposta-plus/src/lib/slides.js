@@ -39,7 +39,7 @@ export function buildSlides({ fields, content, images, settings, custom = [], vi
     kicker: 'APRESENTAÇÃO DE PROPOSTA DE PROJETO',
     title: f('nomeCliente') ? `Projeto — ${f('nomeCliente')}` : 'Projeto de Arquitetura',
     items: [
-      f('descricaoProjeto'),
+      f('objetivoProjeto'),
       `Cliente: ${f('nomeCliente') || '—'}${f('tipologiaProjeto') ? ` · ${f('tipologiaProjeto')}` : ''}`,
     ].filter(Boolean),
   })
@@ -66,12 +66,12 @@ export function buildSlides({ fields, content, images, settings, custom = [], vi
     type: 'clientRequest',
     image: images.scope,
     title: 'Solicitação do cliente',
-    descricaoProjeto: f('descricaoProjeto'),
+    objetivoProjeto: f('objetivoProjeto'),
     rows: [
       ['CLIENTE', f('nomeCliente')],
       ['ENDEREÇO', f('enderecoImovel')],
       ['TIPOLOGIA DO PROJETO', f('tipologiaProjeto')],
-      ['DESCRIÇÃO DO PROJETO', f('descricaoProjeto')],
+      ['OBJETIVO DO PROJETO', f('objetivoProjeto')],
     ].filter(([, v]) => v),
     ambientes: [...ambientesMaior, ...ambientesMenor],
     quantAmbientes: f('quantAmbientes'),

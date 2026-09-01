@@ -53,7 +53,7 @@ export const FIELD_GROUPS = [
     fields: [
       ['tipologiaProjeto', 'Tipologia do projeto', ''],
       ['nomeCliente', 'Nome do cliente', ''],
-      ['descricaoProjeto', 'Descrição do projeto', ''],
+      ['objetivoProjeto', 'Objetivo do projeto', ''],
       ['enderecoImovel', 'Endereço do imóvel', ''],
       ['quantAmbientes', 'Quantidade de ambientes', ''],
       ['ambientesMaiorDificuldade', 'Ambientes (maior dificuldade)', ''],

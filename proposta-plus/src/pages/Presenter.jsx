@@ -41,7 +41,7 @@ export default function Presenter() {
   const [settings, setSettings] = useState(null)
   const [templateContent, setTemplateContent] = useState(null)
   const [index, setIndex] = useState(0)
-  const [revealCount, setRevealCount] = useState(1)
+  const [revealCount, setRevealCount] = useState(0)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [editing, setEditing] = useState(false)
   const [exporting, setExporting] = useState(false)
@@ -110,7 +110,7 @@ export default function Presenter() {
   const [c1, c2, c3] = palette
   const cssVars = paletteToCssVars(palette)
 
-  const goNext = useCallback(() => { setIndex((i) => Math.min(i + 1, visibleSlides.length - 1)); setRevealCount(1) }, [visibleSlides.length])
+  const goNext = useCallback(() => { setIndex((i) => Math.min(i + 1, visibleSlides.length - 1)); setRevealCount(0) }, [visibleSlides.length])
   const goPrev = useCallback(() => { setIndex((i) => Math.max(i - 1, 0)); setRevealCount(999) }, [])
   const itemsLength = getItemsLength(slide)
 
@@ -174,7 +174,7 @@ export default function Presenter() {
   }
 
   /** Salva o vídeo principal no nível certo: só esta proposta, este tipo de projeto, ou todos os tipos. */
-  /** Atualiza campos de "Dados do projeto" direto pelo slide (ex: Descrição do projeto),
+  /** Atualiza campos de "Dados do projeto" direto pelo slide (ex: Objetivo do projeto),
    *  garantindo que fique sincronizado com a aba "Dados do projeto" do editor. */
   async function saveFieldsPatch(patch) {
     return new Promise((resolve) => {
@@ -272,7 +272,12 @@ export default function Presenter() {
         const node = exportRef.current
         let canvas
         try {
-          canvas = await html2canvas(node, { width: EXPORT_W, height: EXPORT_H, scale: 2, useCORS: true, allowTaint: true, backgroundColor: '#28313C' })
+          canvas = await html2canvas(node, {
+            width: EXPORT_W, height: EXPORT_H, scale: 2, useCORS: true, allowTaint: true,
+            backgroundColor: '#28313C', logging: false, imageTimeout: 15000,
+            // iframes (vídeo do YouTube) nunca devem ser capturados — travam o html2canvas
+            ignoreElements: (el) => el.tagName === 'IFRAME',
+          })
         } catch (slideErr) {
           console.error('Falha ao capturar slide', i, slideErr)
           continue // pula esse slide em vez de derrubar o PDF inteiro
@@ -590,7 +595,7 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
   const [noImage, setNoImage] = useState(!!slide.noImage)
   const [imagePosition, setImagePosition] = useState(slide.imagePosition || 'left')
   const isClientRequest = slide.type === 'clientRequest'
-  const [descricaoProjeto, setDescricaoProjeto] = useState(slide.descricaoProjeto || '')
+  const [objetivoProjeto, setObjetivoProjeto] = useState(slide.objetivoProjeto || '')
   const isPackagesSummary = slide.type === 'packagesSummary'
   const [packageExtras, setPackageExtras] = useState(() => (slide.packages || []).reduce((acc, pkg) => {
     acc[pkg.id] = { ...(slide.packageExtras?.[pkg.id] || {}) }
@@ -619,7 +624,7 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
     setNoImage(!!slide.noImage)
     setImagePosition(slide.imagePosition || 'left')
     setCoverImage(slide.image || '')
-    setDescricaoProjeto(slide.descricaoProjeto || '')
+    setObjetivoProjeto(slide.objetivoProjeto || '')
     setPackageExtras((slide.packages || []).reduce((acc, pkg) => {
       acc[pkg.id] = { ...(slide.packageExtras?.[pkg.id] || {}) }
       return acc
@@ -651,7 +656,7 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
     if (slide.type === 'divider') { patch.subtitle = subtitle; patch.bgColor = bgColor; patch.textColor = textColor }
     if (slide.type === 'journeyFlow') { patch.subtitle = subtitle }
     if (COLOR_CUSTOMIZABLE_TYPES.has(slide.type)) { patch.bgColor = bgColor; patch.textColor = textColor }
-    if (isClientRequest) { onSaveFields?.({ descricaoProjeto }) }
+    if (isClientRequest) { onSaveFields?.({ objetivoProjeto }) }
     if (isPackagesSummary) { onSave({ packageExtras }, 'proposal') }
     if (isStages) { patch.stages = stages; patch.footnote = footnote }
     if (isReasons) { patch.items = reasonsList }
@@ -725,12 +730,12 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
                 <div className="text-sm font-medium mb-2">{pkg.label}</div>
                 {extra.image && (
                   <div className="mb-2">
-                    <img src={extra.image} className="w-24 aspect-square object-cover rounded-lg mb-1" alt="" />
+                    <img src={extra.image} className="w-28 object-cover rounded-lg mb-1" style={{ aspectRatio: "5 / 4" }} alt="" />
                     <button onClick={() => setPackageExtras((prev) => ({ ...prev, [pkg.id]: { ...prev[pkg.id], image: '' } }))} className="text-xs text-red-600">remover imagem</button>
                   </div>
                 )}
                 <label className="text-xs cursor-pointer text-clay font-medium block mb-2">
-                  {extra.image ? 'Trocar imagem (1:1)' : '+ adicionar imagem (1:1)'}
+                  {extra.image ? 'Trocar imagem (5:4)' : '+ adicionar imagem (5:4)'}
                   <input type="file" accept="image/*" hidden onChange={(e) => {
                     const file = e.target.files[0]; if (!file) return
                     const reader = new FileReader()
@@ -753,9 +758,9 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
 
       {isClientRequest && (
         <>
-          <label className="text-xs font-medium text-ink/70 block mb-1">Descrição do projeto</label>
-          <textarea value={descricaoProjeto} onChange={(e) => setDescricaoProjeto(e.target.value)} rows={3} className="w-full text-sm p-2.5 rounded-lg border border-line outline-none focus:border-clay mb-1" placeholder="Ex: Reforma completa de interiores…" />
-          <p className="text-[11px] text-muted mb-4">Isso atualiza também o campo "Descrição do projeto" em Dados do projeto.</p>
+          <label className="text-xs font-medium text-ink/70 block mb-1">Objetivo do projeto</label>
+          <textarea value={objetivoProjeto} onChange={(e) => setObjetivoProjeto(e.target.value)} rows={3} className="w-full text-sm p-2.5 rounded-lg border border-line outline-none focus:border-clay mb-1" placeholder="Ex: Reforma completa de interiores…" />
+          <p className="text-[11px] text-muted mb-4">Isso atualiza também o campo "Objetivo do projeto" em Dados do projeto.</p>
         </>
       )}
 
@@ -1189,7 +1194,7 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
       return (
         <SplitLayout image={slide.image} radius={radius} noImage={slide.noImage} imagePosition={slide.imagePosition} bg={bg}>
           <h2 className="text-2xl md:text-3xl mb-8" style={{ ...titleStyle, color: titleColor }}>{slide.title}</h2>
-          <ol className={slide.noImage ? 'grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-3' : 'space-y-3'}>
+          <ol className="space-y-3">
             {slide.items.map((it, i) => (
               <Reveal key={i} i={i} revealCount={revealCount} className="flex gap-3 text-lg" style={{ color: heading }}>
                 <span style={{ color: c1 }} className="font-semibold">{i + 1}.</span>
@@ -1361,7 +1366,7 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
                       {pkg.benefits.map((b, k) => <li key={k}>• {b}</li>)}
                     </ul>
                   )}
-                  {extra?.image && <img src={extra.image} alt="" className="w-full aspect-square object-cover rounded-lg mb-3" style={{ objectPosition: `${extra.posX ?? 50}% ${extra.posY ?? 50}%` }} />}
+                  {extra?.image && <img src={extra.image} alt="" className="w-full object-cover rounded-lg mb-3" style={{ aspectRatio: '5 / 4', objectPosition: `${extra.posX ?? 50}% ${extra.posY ?? 50}%` }} />}
                   {extra?.description && <div className="text-sm mt-auto pt-2" style={{ color: heading, opacity: 0.8 }}>{extra.description}</div>}
                 </Reveal>
               )
@@ -1553,12 +1558,18 @@ function SplitLayout({ image, radius, imageRight = false, imagePosition, noImage
   if (noImage) {
     return (
       <div className="w-full h-full overflow-auto" style={{ background: bg || SAND }}>
-        <div className="p-10 md:p-16 max-w-4xl mx-auto">{children}</div>
+        <div className="p-10 md:p-16 max-w-2xl mx-auto">{children}</div>
       </div>
     )
   }
   const onRight = imagePosition ? imagePosition === 'right' : imageRight
-  const text = <div className="p-10 md:p-16 flex flex-col justify-center overflow-auto" style={{ background: bg || SAND }}>{children}</div>
+  // o texto fica alinhado à esquerda dentro do bloco, mas o bloco em si é centralizado
+  // verticalmente e horizontalmente na sua metade da página
+  const text = (
+    <div className="p-10 md:p-16 flex flex-col justify-center items-center overflow-auto" style={{ background: bg || SAND }}>
+      <div className="max-w-md w-full">{children}</div>
+    </div>
+  )
   const img = <SlideImage src={image} className="w-full h-full" />
   return (
     <div className="w-full h-full grid grid-cols-1 md:grid-cols-2">
@@ -1587,7 +1598,7 @@ function TopicImageSlide({ slide, c1, revealCount, radius }) {
       )}
 
       {/* tópicos sempre empilhados, um abaixo do outro — nunca lado a lado */}
-      <div className={`shrink-0 space-y-2 mb-8 ${hasImages ? 'max-w-xl' : 'max-w-3xl mx-auto w-full text-center'}`}>
+      <div className={`shrink-0 space-y-2 mb-10 ${hasImages ? 'max-w-xl' : 'max-w-3xl mx-auto w-full text-center'}`}>
         {slide.items.map((it, i) => (
           <div key={i} className="auto-left-item flex items-start gap-2" style={{ animationDelay: `${i * 40}ms`, color: heading, opacity: 0.85, justifyContent: hasImages ? 'flex-start' : 'center' }}>
             <span style={{ color: c1 }}>●</span><span>{it}</span>
@@ -1595,12 +1606,13 @@ function TopicImageSlide({ slide, c1, revealCount, radius }) {
         ))}
       </div>
 
-      {/* área reservada para as imagens: tamanho fixo (no máximo ~48% da altura), então o
-          slide nunca cresce além da tela nem as fotos ficam grandes demais */}
+      {/* área reservada para as imagens: tamanho fixo (no máximo ~44% da altura, nunca mais
+          que isso — maxHeight garante que não "estoure" por cima do título/tópicos), então
+          o slide nunca cresce além da tela nem as fotos ficam grandes demais */}
       {hasImages && (
-        <div className="min-h-0" style={{ flex: '0 1 48%' }}>
+        <div className="min-h-0" style={{ flex: '0 1 44%', maxHeight: '44%' }}>
           {layout === 'grid' ? (
-            <div className="grid grid-cols-2 gap-5 justify-items-center content-center" style={{ maxHeight: '100%' }}>
+            <div className="grid grid-cols-2 gap-6 justify-items-center content-center" style={{ maxHeight: '100%' }}>
               {imgs.map((img, i) => (
                 <div key={i} className="relative overflow-hidden bg-[#DDD6C8] w-full" style={{ borderRadius: radius, aspectRatio: RATIO_CSS[img.ratio] || '1 / 1', maxHeight: '100%' }}>
                   <Reveal i={i} revealCount={revealCount} className="absolute inset-0">
@@ -1610,9 +1622,9 @@ function TopicImageSlide({ slide, c1, revealCount, radius }) {
               ))}
             </div>
           ) : (
-            <div className="flex gap-5 h-full justify-center">
+            <div className="flex gap-6 h-full justify-center">
               {imgs.map((img, i) => (
-                <div key={i} className="relative overflow-hidden bg-[#DDD6C8] h-full" style={{ borderRadius: radius, aspectRatio: RATIO_CSS[img.ratio] || '1 / 1' }}>
+                <div key={i} className="relative overflow-hidden bg-[#DDD6C8]" style={{ borderRadius: radius, aspectRatio: RATIO_CSS[img.ratio] || '1 / 1', maxHeight: '100%', maxWidth: '48%' }}>
                   <Reveal i={i} revealCount={revealCount} className="absolute inset-0">
                     <SlideImage src={img.url} className="w-full h-full" style={{ objectPosition: `${img.posX ?? 50}% ${img.posY ?? 50}%` }} />
                   </Reveal>

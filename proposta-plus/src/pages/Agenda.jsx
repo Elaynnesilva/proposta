@@ -63,11 +63,11 @@ export default function Agenda() {
       const client = p.name || 'Sem nome'
       if (p.scheduledAt) {
         const d = new Date(p.scheduledAt)
-        if (!isNaN(d)) list.push({ date: d, kind: 'proposta', client, proposalId: p.id, tipologia: p.tipologia })
+        if (!isNaN(d)) list.push({ date: d, kind: 'proposta', client, proposalId: p.id, tipologia: p.tipologia, completed: !!p.completedMilestones?.proposta })
       }
       if (p.contractedAt) {
         const d = new Date(p.contractedAt)
-        if (!isNaN(d)) list.push({ date: d, kind: 'contrato', client, proposalId: p.id, tipologia: p.tipologia })
+        if (!isNaN(d)) list.push({ date: d, kind: 'contrato', client, proposalId: p.id, tipologia: p.tipologia, completed: !!p.completedMilestones?.contrato })
       }
       if (p.status === 'aceita') {
         // usa o pacote que o cliente escolheu; se não tiver sido marcado (propostas antigas),
@@ -84,7 +84,7 @@ export default function Agenda() {
           ]
           pairs.forEach(([kind, fieldCode]) => {
             const d = parseBrDate(p.fields?.[fieldCode])
-            if (d) list.push({ date: d, kind, client, proposalId: p.id, tipologia: p.tipologia, packageId: pkg.id })
+            if (d) list.push({ date: d, kind, client, proposalId: p.id, tipologia: p.tipologia, packageId: pkg.id, completed: !!p.completedMilestones?.[kind] })
           })
         }
       }
@@ -146,9 +146,15 @@ export default function Agenda() {
   }
 
   async function toggleCompleted(e) {
-    if (e.kind !== 'custom') return
-    await saveEvent({ id: e.eventId, title: e.title, client: e.client, date: e.date.toISOString().slice(0, 16), proposalId: e.proposalId, completed: !e.completed })
-    refreshEvents()
+    if (e.kind === 'custom') {
+      await saveEvent({ id: e.eventId, title: e.title, client: e.client, date: e.date.toISOString().slice(0, 16), proposalId: e.proposalId, completed: !e.completed })
+      refreshEvents()
+      return
+    }
+    const proposal = proposals.find((p) => p.id === e.proposalId)
+    if (!proposal) return
+    await saveProposal({ ...proposal, completedMilestones: { ...(proposal.completedMilestones || {}), [e.kind]: !e.completed } })
+    refreshProposals()
   }
 
   /** "Reagendar": muda a data/hora de um compromisso. Para compromissos avulsos, atualiza o
@@ -300,11 +306,7 @@ function EventsTable({ events, onOpen, onToggle, onReschedule, compact }) {
             return (
               <tr key={i} className={e.completed ? 'opacity-50' : ''}>
                 <td className="px-4 py-2.5">
-                  {e.kind === 'custom' ? (
-                    <input type="checkbox" checked={!!e.completed} onChange={() => onToggle(e)} />
-                  ) : (
-                    <span title={meta.label}>{meta.icon}</span>
-                  )}
+                  <input type="checkbox" checked={!!e.completed} onChange={() => onToggle(e)} />
                 </td>
                 <td className="px-2 py-2.5 whitespace-nowrap">{e.date.toLocaleDateString('pt-BR')}</td>
                 <td className="px-2 py-2.5 whitespace-nowrap">{e.date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</td>
