@@ -1,4 +1,4 @@
-import { listItems, money, hasValue, PACKAGE_LIST, mesesParaTextoApresentacao, arredondarParcelas } from './fields'
+import { listItems, money, hasValue, PACKAGE_LIST, mesesParaTextoApresentacao, arredondarParcelas, parseMoneyBR } from './fields'
 
 const SECTION_META = {
   plantasGerais: { label: 'Plantas Gerais', icon: 'blueprint' },
@@ -156,15 +156,19 @@ export function buildSlides({ fields, content, images, settings, custom = [], vi
     ].filter(Boolean)
 
     const payments = paymentsFor(pkg.id)
+    const parcelasPrazo = arredondarParcelas(f(`${pkg.id}PrazoMeses`))
+    const valorNumerico = parseMoneyBR(value)
     const paymentCards = [
       payments.cartao && hasValue(f(`${pkg.id}CartaoParcela12x`)) && {
         id: 'cartao', label: 'Cartão de crédito', highlight: true,
         value: `${f('pagamentoCartaoMeses') || '12'}x de ${money(f(`${pkg.id}CartaoParcela12x`))}`,
         detail: hasValue(f(`${pkg.id}CartaoTotal`)) ? `Total com juros: ${money(f(`${pkg.id}CartaoTotal`))}${f('pagamentoCartaoJuros') ? ` (${f('pagamentoCartaoJuros')} a.a.)` : ''}` : '',
       },
-      payments.prazo && hasValue(f(`${pkg.id}PagamentoPorMes`)) && {
+      payments.prazo && parcelasPrazo && valorNumerico != null && {
         id: 'prazo', label: 'Por prazo de projeto',
-        value: `${arredondarParcelas(f(`${pkg.id}PrazoMeses`)) || ''}x de ${money(f(`${pkg.id}PagamentoPorMes`))}`,
+        // o valor da parcela é o valor total do pacote dividido pelo nº de parcelas já
+        // arredondado — não pela fração decimal do prazo (ex: 3325,87 ÷ 2, não ÷ 1,62)
+        value: `${parcelasPrazo}x de ${money(valorNumerico / parcelasPrazo)}`,
         detail: 'Uma parcela por mês de desenvolvimento do projeto',
       },
       payments.avista && hasValue(f(`${pkg.id}PagamentoAVista`)) && {

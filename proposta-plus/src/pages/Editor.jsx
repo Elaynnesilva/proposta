@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { getProposal, saveProposal, getSettings, addSavedSwatch, addSavedPalette, removeSavedPalette } from '../lib/db'
+import { getProposal, saveProposal, getSettings, addSavedSwatch, addSavedPalette, removeSavedPalette, listEvents, saveEvent, deleteEvent } from '../lib/db'
 import { toEmbedUrl, parseMoneyBR } from '../lib/fields'
 import DataTable from '../components/DataTable'
 import ColorWheelPicker from '../components/ColorWheelPicker'
@@ -10,6 +10,7 @@ import { PACKAGE_LIST } from '../lib/fields'
 
 const TABS = [
   { id: 'dados', label: 'Dados do projeto' },
+  { id: 'agendamentos', label: 'Agendamentos' },
   { id: 'design', label: 'Design e cores' },
   { id: 'precos', label: 'Preços a mostrar' },
   { id: 'slides', label: 'Slides personalizados' },
@@ -48,56 +49,59 @@ export default function Editor() {
 
   return (
     <>
-      <div className="w-full px-6 md:px-10 pt-6 md:pt-8 pb-4 mb-6" style={{ background: '#EFE6D5', borderBottom: '1px solid #E4D9C3' }}>
+      <div className="w-full px-4 sm:px-6 md:px-10 pt-4 sm:pt-6 md:pt-8 pb-4 mb-6 md:sticky md:top-0 md:z-10" style={{ background: '#EFE6D5', borderBottom: '1px solid #E4D9C3' }}>
         <div className="max-w-5xl mx-auto">
-        <div className="flex items-center justify-between mb-3 flex-wrap gap-3">
-          <div>
-            <button onClick={() => navigate('/')} className="text-xs text-muted hover:text-ink mb-1">← Voltar às propostas</button>
-            <input
-              value={proposal.name || ''}
-              onChange={(e) => persist({ name: e.target.value })}
-              className="font-display text-2xl md:text-3xl text-ink outline-none bg-transparent border-b border-transparent focus:border-line w-full max-w-md"
-            />
-          </div>
-          <div className="flex items-center gap-3">
-            <span className="text-xs text-muted">{saving ? 'Salvando…' : savedTick ? 'Salvo ✓' : ''}</span>
-            <button
-              onClick={() => navigate(`/proposta/${id}/apresentar`)}
-              className="bg-ink text-white text-sm font-medium px-5 py-2.5 rounded-full hover:opacity-90"
-            >Apresentar →</button>
-          </div>
-        </div>
-
-        <StatusRow proposal={proposal} onChange={persist} />
-
-        <div className="flex items-center gap-6 flex-wrap text-sm mt-3">
-          <div className="flex items-center gap-2">
-            <label className="text-muted">Proposta:</label>
-            <input
-              type="datetime-local"
-              value={proposal.scheduledAt || ''}
-              onChange={(e) => persist({ scheduledAt: e.target.value })}
-              className="text-sm p-1.5 rounded-lg border border-line outline-none focus:border-clay bg-white"
-            />
-            {proposal.scheduledAt && (
-              <button onClick={() => persist({ scheduledAt: '' })} className="text-xs text-muted hover:text-red-600">remover</button>
-            )}
-          </div>
-          {proposal.status === 'aceita' && (
-            <div className="flex items-center gap-2">
-              <label className="text-muted">Contrato:</label>
+          <div className="flex items-center justify-between mb-3 flex-wrap gap-3">
+            <div>
+              <button onClick={() => navigate('/')} className="text-xs text-muted hover:text-ink mb-1">← Voltar às propostas</button>
               <input
-                type="datetime-local"
-                value={proposal.contractedAt || ''}
-                onChange={(e) => persist({ contractedAt: e.target.value })}
-                className="text-sm p-1.5 rounded-lg border border-line outline-none focus:border-clay bg-white"
+                value={proposal.name || ''}
+                onChange={(e) => persist({ name: e.target.value })}
+                className="font-display text-2xl md:text-3xl text-ink outline-none bg-transparent border-b border-transparent focus:border-line w-full max-w-md"
               />
-              {proposal.contractedAt && (
-                <button onClick={() => persist({ contractedAt: '' })} className="text-xs text-muted hover:text-red-600">remover</button>
+            </div>
+            <div className="flex items-center gap-3 flex-wrap">
+              <StatusPills proposal={proposal} onChange={persist} />
+              <span className="text-xs text-muted">{saving ? 'Salvando…' : savedTick ? 'Salvo ✓' : ''}</span>
+              <button
+                onClick={() => navigate(`/proposta/${id}/apresentar`)}
+                className="bg-ink text-white text-sm font-medium px-5 py-2.5 rounded-full hover:opacity-90"
+              >Apresentar →</button>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between flex-wrap gap-x-6 gap-y-2 text-sm">
+            <PackageRow proposal={proposal} onChange={persist} />
+
+            <div className="flex items-center gap-4 flex-wrap">
+              <div className="flex items-center gap-2">
+                <label className="text-muted">Proposta:</label>
+                <input
+                  type="datetime-local"
+                  value={proposal.scheduledAt || ''}
+                  onChange={(e) => persist({ scheduledAt: e.target.value })}
+                  className="text-sm p-1.5 rounded-lg border border-line outline-none focus:border-clay bg-white"
+                />
+                {proposal.scheduledAt && (
+                  <button onClick={() => persist({ scheduledAt: '' })} className="text-xs text-muted hover:text-red-600">✕</button>
+                )}
+              </div>
+              {proposal.status === 'aceita' && (
+                <div className="flex items-center gap-2">
+                  <label className="text-muted">Contrato:</label>
+                  <input
+                    type="datetime-local"
+                    value={proposal.contractedAt || ''}
+                    onChange={(e) => persist({ contractedAt: e.target.value })}
+                    className="text-sm p-1.5 rounded-lg border border-line outline-none focus:border-clay bg-white"
+                  />
+                  {proposal.contractedAt && (
+                    <button onClick={() => persist({ contractedAt: '' })} className="text-xs text-muted hover:text-red-600">✕</button>
+                  )}
+                </div>
               )}
             </div>
-          )}
-        </div>
+          </div>
         </div>
       </div>
 
@@ -113,6 +117,7 @@ export default function Editor() {
       </div>
 
       {tab === 'dados' && <DataTable fields={proposal.fields || {}} onChange={(fields) => persist({ fields })} />}
+      {tab === 'agendamentos' && <AgendamentosTab proposal={proposal} />}
       {tab === 'design' && <DesignTab proposal={proposal} onChange={persist} />}
       {tab === 'precos' && <PricingVisibilityTab proposal={proposal} onChange={persist} />}
       {tab === 'slides' && <CustomSlidesTab proposal={proposal} onChange={persist} />}
@@ -121,7 +126,7 @@ export default function Editor() {
   )
 }
 
-function StatusRow({ proposal, onChange }) {
+function StatusPills({ proposal, onChange }) {
   const status = proposal.status || 'rascunho'
   const STATUS_OPTS = [
     { id: 'rascunho', label: 'Rascunho', color: '#7C8288', bg: '#F1F1EF' },
@@ -138,6 +143,24 @@ function StatusRow({ proposal, onChange }) {
     }
   }
 
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap">
+      <span className="text-xs text-muted mr-0.5">Status:</span>
+      {STATUS_OPTS.map((s) => (
+        <button
+          key={s.id}
+          onClick={() => setStatus(s.id)}
+          className="text-xs px-3 py-1.5 rounded-full transition"
+          style={status === s.id ? { color: s.color, background: s.bg, fontWeight: 600 } : { color: '#7C8288', background: 'transparent', border: '1px solid #E4DFD6' }}
+        >{s.label}</button>
+      ))}
+    </div>
+  )
+}
+
+function PackageRow({ proposal, onChange }) {
+  if (proposal.status !== 'aceita') return <div />
+
   function choosePackage(pkg) {
     const raw = proposal.fields?.[`pacote${pkg.id.charAt(0).toUpperCase()}${pkg.id.slice(1)}Valor`]
     const value = parseMoneyBR(raw)
@@ -145,47 +168,107 @@ function StatusRow({ proposal, onChange }) {
   }
 
   return (
-    <div>
-      <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-xs text-muted mr-1">Status:</span>
-        {STATUS_OPTS.map((s) => (
-          <button
-            key={s.id}
-            onClick={() => setStatus(s.id)}
-            className="text-xs px-3 py-1.5 rounded-full transition"
-            style={status === s.id ? { color: s.color, background: s.bg, fontWeight: 600 } : { color: '#7C8288', background: 'transparent', border: '1px solid #E4DFD6' }}
-          >{s.label}</button>
+    <div className="flex items-center gap-4 flex-wrap">
+      <div className="flex items-center gap-2">
+        <label className="text-muted shrink-0">Pacote escolhido:</label>
+        <select
+          value={proposal.acceptedPackageId || ''}
+          onChange={(e) => e.target.value && choosePackage(PACKAGE_LIST.find((p) => p.id === e.target.value))}
+          className="text-sm p-1.5 rounded-lg border border-line outline-none focus:border-clay bg-white"
+        >
+          <option value="" disabled>Selecione…</option>
+          {PACKAGE_LIST.map((pkg) => (
+            <option key={pkg.id} value={pkg.id}>{pkg.label}</option>
+          ))}
+        </select>
+      </div>
+      {proposal.acceptedPackageId && (
+        <div className="flex items-center gap-2">
+          <label className="text-muted">Valor fechado:</label>
+          <div className="flex items-center gap-1">
+            <span className="text-muted">R$</span>
+            <input
+              type="number" step="0.01"
+              value={proposal.acceptedValue ?? ''}
+              onChange={(e) => onChange({ acceptedValue: e.target.value === '' ? null : Number(e.target.value) })}
+              className="text-sm p-1.5 rounded-lg border border-line outline-none focus:border-clay w-32"
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function AgendamentosTab({ proposal }) {
+  const [events, setEvents] = useState(null)
+  const [showForm, setShowForm] = useState(false)
+  const [editing, setEditing] = useState(null)
+
+  useEffect(() => { refresh() }, [proposal.id])
+
+  async function refresh() {
+    const all = await listEvents()
+    setEvents(all.filter((e) => e.proposalId === proposal.id))
+  }
+
+  async function remove(id) {
+    if (!confirm('Remover este compromisso?')) return
+    await deleteEvent(id)
+    refresh()
+  }
+
+  if (events === null) return <p className="text-sm text-muted">Carregando…</p>
+
+  return (
+    <div className="max-w-xl">
+      <p className="text-sm text-muted mb-4">Compromissos marcados na Agenda e vinculados a esta proposta.</p>
+      <div className="space-y-2 mb-4">
+        {events.length === 0 ? (
+          <p className="text-sm text-muted">Nenhum compromisso vinculado ainda.</p>
+        ) : events.sort((a, b) => new Date(a.date) - new Date(b.date)).map((e) => (
+          <div key={e.id} className="border border-line rounded-lg p-3 flex items-center gap-3">
+            <div className="flex-1">
+              <div className={`text-sm font-medium ${e.completed ? 'line-through text-muted' : 'text-ink'}`}>{e.title}</div>
+              <div className="text-xs text-muted">{new Date(e.date).toLocaleDateString('pt-BR')} · {new Date(e.date).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</div>
+            </div>
+            <button onClick={() => { setEditing(e); setShowForm(true) }} className="text-xs text-clay">editar</button>
+            <button onClick={() => remove(e.id)} className="text-xs text-red-600">excluir</button>
+          </div>
         ))}
       </div>
 
-      {status === 'aceita' && (
-        <div className="mt-3 p-3 bg-white/70 border border-line rounded-lg max-w-lg">
-          <div className="flex items-center gap-2 flex-wrap">
-            <label className="text-xs text-muted shrink-0">Pacote escolhido:</label>
-            <select
-              value={proposal.acceptedPackageId || ''}
-              onChange={(e) => e.target.value && choosePackage(PACKAGE_LIST.find((p) => p.id === e.target.value))}
-              className="text-sm p-1.5 rounded-lg border border-line outline-none focus:border-clay bg-white"
-            >
-              <option value="" disabled>Selecione…</option>
-              {PACKAGE_LIST.map((pkg) => (
-                <option key={pkg.id} value={pkg.id}>{pkg.label}</option>
-              ))}
-            </select>
-          </div>
-          {proposal.acceptedPackageId && (
-            <div className="flex items-center gap-2 mt-2">
-              <label className="text-xs text-muted">Valor fechado:</label>
-              <input
-                type="number" step="0.01"
-                value={proposal.acceptedValue ?? ''}
-                onChange={(e) => onChange({ acceptedValue: e.target.value === '' ? null : Number(e.target.value) })}
-                className="text-sm p-1.5 rounded-lg border border-line outline-none focus:border-clay w-40"
-              />
-            </div>
-          )}
-        </div>
+      {showForm ? (
+        <AgendamentoForm
+          proposal={proposal}
+          editing={editing}
+          onClose={() => { setShowForm(false); setEditing(null) }}
+          onSaved={async (ev) => { await saveEvent(ev); await refresh(); setShowForm(false); setEditing(null) }}
+        />
+      ) : (
+        <button onClick={() => { setEditing(null); setShowForm(true) }} className="text-sm text-white bg-ink px-4 py-2 rounded-full hover:opacity-90">+ Novo compromisso com este cliente</button>
       )}
+    </div>
+  )
+}
+
+function AgendamentoForm({ proposal, editing, onClose, onSaved }) {
+  const [title, setTitle] = useState(editing?.title || '')
+  const [date, setDate] = useState(editing?.date || '')
+
+  function submit() {
+    if (!title || !date) { alert('Preencha título e data.'); return }
+    onSaved({ id: editing?.id, title, date, proposalId: proposal.id, client: proposal.name || proposal.fields?.nomeCliente || '', completed: editing?.completed || false })
+  }
+
+  return (
+    <div className="border border-line rounded-lg p-4 mt-2">
+      <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Título do compromisso" className="w-full text-sm p-2 mb-2 rounded-lg border border-line outline-none focus:border-clay" />
+      <input type="datetime-local" value={date} onChange={(e) => setDate(e.target.value)} className="text-sm p-2 mb-3 rounded-lg border border-line outline-none focus:border-clay" />
+      <div className="flex gap-2">
+        <button onClick={onClose} className="text-xs px-3 py-1.5 rounded-full border border-line text-ink/70">Cancelar</button>
+        <button onClick={submit} className="text-xs px-3 py-1.5 rounded-full bg-ink text-white">Salvar</button>
+      </div>
     </div>
   )
 }

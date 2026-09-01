@@ -23,6 +23,7 @@ export default function Agenda() {
   const [selectedKey, setSelectedKey] = useState(null)
   const [search, setSearch] = useState('')
   const [showForm, setShowForm] = useState(false)
+  const [editingEvent, setEditingEvent] = useState(null)
 
   useEffect(() => {
     listProposals().then(setProposals).catch((err) => console.error('Erro ao carregar propostas', err))
@@ -44,11 +45,11 @@ export default function Agenda() {
       const client = p.name || 'Sem nome'
       if (p.scheduledAt) {
         const d = new Date(p.scheduledAt)
-        if (!isNaN(d)) list.push({ date: d, kind: 'proposta', client, proposalId: p.id })
+        if (!isNaN(d)) list.push({ date: d, kind: 'proposta', client, proposalId: p.id, tipologia: p.tipologia })
       }
       if (p.contractedAt) {
         const d = new Date(p.contractedAt)
-        if (!isNaN(d)) list.push({ date: d, kind: 'contrato', client, proposalId: p.id })
+        if (!isNaN(d)) list.push({ date: d, kind: 'contrato', client, proposalId: p.id, tipologia: p.tipologia })
       }
       if (p.status === 'aceita') {
         // usa o pacote que o cliente escolheu; se não tiver sido marcado (propostas antigas),
@@ -65,16 +66,17 @@ export default function Agenda() {
           ]
           pairs.forEach(([kind, fieldCode]) => {
             const d = parseBrDate(p.fields?.[fieldCode])
-            if (d) list.push({ date: d, kind, client, proposalId: p.id })
+            if (d) list.push({ date: d, kind, client, proposalId: p.id, tipologia: p.tipologia })
           })
         }
       }
     })
     customEvents.forEach((e) => {
       const d = new Date(e.date)
-      if (!isNaN(d)) list.push({ date: d, kind: 'custom', client: e.client, title: e.title, eventId: e.id })
+      const linked = e.proposalId ? proposals.find((p) => p.id === e.proposalId) : null
+      if (!isNaN(d)) list.push({ date: d, kind: 'custom', client: e.client, title: e.title, eventId: e.id, proposalId: e.proposalId || null, tipologia: linked?.tipologia, completed: !!e.completed })
     })
-    return list
+    return list.sort((a, b) => a.date - b.date)
   }, [proposals, customEvents])
 
   const eventsByDay = useMemo(() => {
@@ -91,12 +93,10 @@ export default function Agenda() {
     const q = search.trim().toLowerCase()
     if (!q) return null
     const byDate = q.match(/^(\d{1,2})\/(\d{1,2})/)
-    return events
-      .filter((e) => {
-        if (byDate) return e.date.getDate() === Number(byDate[1]) && e.date.getMonth() + 1 === Number(byDate[2])
-        return (e.client || '').toLowerCase().includes(q) || (e.title || '').toLowerCase().includes(q)
-      })
-      .sort((a, b) => a.date - b.date)
+    return events.filter((e) => {
+      if (byDate) return e.date.getDate() === Number(byDate[1]) && e.date.getMonth() + 1 === Number(byDate[2])
+      return (e.client || '').toLowerCase().includes(q) || (e.title || '').toLowerCase().includes(q)
+    })
   }, [search, events])
 
   const year = cursor.getFullYear()
@@ -113,17 +113,23 @@ export default function Agenda() {
   const selectedEvents = selectedKey ? (eventsByDay.get(selectedKey) || []) : []
 
   function handleDayClick(key, dayEvents) {
-    if (dayEvents.length === 1) { openEvent(dayEvents[0]); return }
-    if (dayEvents.length > 1) setSelectedKey(key === selectedKey ? null : key)
+    setSelectedKey(key === selectedKey ? null : key)
   }
 
   function openEvent(e) {
+    if (e.kind === 'custom') { setEditingEvent(e); setShowForm(true); return }
     if (e.proposalId) navigate(`/proposta/${e.proposalId}/editar`)
   }
 
   async function removeCustomEvent(id) {
     if (!confirm('Remover este compromisso?')) return
     await deleteEvent(id)
+    refreshEvents()
+  }
+
+  async function toggleCompleted(e) {
+    if (e.kind !== 'custom') return
+    await saveEvent({ id: e.eventId, title: e.title, client: e.client, date: e.date.toISOString().slice(0, 16), proposalId: e.proposalId, completed: !e.completed })
     refreshEvents()
   }
 
@@ -134,7 +140,7 @@ export default function Agenda() {
           <h1 className="font-display text-2xl md:text-3xl text-ink mb-1">Agenda</h1>
           <p className="text-sm text-muted">Apresentações, contratos, entregas de propostas aceitas — e o que mais você marcar.</p>
         </div>
-        <button onClick={() => setShowForm(true)} className="bg-clay text-white text-sm font-medium px-4 py-2 rounded-full hover:opacity-90 shrink-0">+ Novo compromisso</button>
+        <button onClick={() => { setEditingEvent(null); setShowForm(true) }} className="bg-clay text-white text-sm font-medium px-4 py-2 rounded-full hover:opacity-90 shrink-0">+ Novo compromisso</button>
       </div>
 
       <input
@@ -147,8 +153,10 @@ export default function Agenda() {
       {showForm && (
         <NewEventForm
           proposals={proposals}
-          onClose={() => setShowForm(false)}
-          onSaved={async (ev) => { await saveEvent(ev); await refreshEvents(); setShowForm(false) }}
+          editingEvent={editingEvent}
+          onClose={() => { setShowForm(false); setEditingEvent(null) }}
+          onSaved={async (ev) => { await saveEvent(ev); await refreshEvents(); setShowForm(false); setEditingEvent(null) }}
+          onDelete={editingEvent ? async () => { await removeCustomEvent(editingEvent.eventId); setShowForm(false); setEditingEvent(null) } : null}
         />
       )}
 
@@ -159,7 +167,7 @@ export default function Agenda() {
           {searchResults.length === 0 ? (
             <div className="p-6 text-center text-sm text-muted">Nada encontrado.</div>
           ) : searchResults.map((e, i) => (
-            <EventRow key={i} e={e} onOpen={() => openEvent(e)} onRemove={e.eventId ? () => removeCustomEvent(e.eventId) : null} />
+            <EventRow key={i} e={e} onOpen={() => openEvent(e)} onToggle={() => toggleCompleted(e)} />
           ))}
         </div>
       ) : events.length === 0 ? (
@@ -167,82 +175,104 @@ export default function Agenda() {
           Nenhum compromisso ainda. Marque a data de uma apresentação dentro de cada proposta, aceite uma proposta com prazo preenchido, ou adicione um compromisso avulso.
         </div>
       ) : (
-        <div className="bg-white border border-line rounded-2xl p-5 md:p-7">
-          <div className="flex items-center justify-between mb-5">
-            <h2 className="font-display text-lg text-ink capitalize">{monthLabel}</h2>
-            <div className="flex gap-1">
-              <button onClick={() => { setCursor(new Date(year, month - 1, 1)); setSelectedKey(null) }} className="w-8 h-8 rounded-full border border-line hover:bg-sand text-sm">‹</button>
-              <button onClick={() => { setCursor(new Date()); setSelectedKey(null) }} className="text-xs px-3 h-8 rounded-full border border-line hover:bg-sand">hoje</button>
-              <button onClick={() => { setCursor(new Date(year, month + 1, 1)); setSelectedKey(null) }} className="w-8 h-8 rounded-full border border-line hover:bg-sand text-sm">›</button>
+        <>
+          <div className="bg-white border border-line rounded-2xl p-5 md:p-7 mb-6">
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="font-display text-lg text-ink capitalize">{monthLabel}</h2>
+              <div className="flex gap-1">
+                <button onClick={() => { setCursor(new Date(year, month - 1, 1)); setSelectedKey(null) }} className="w-8 h-8 rounded-full border border-line hover:bg-sand text-sm">‹</button>
+                <button onClick={() => { setCursor(new Date()); setSelectedKey(null) }} className="text-xs px-3 h-8 rounded-full border border-line hover:bg-sand">hoje</button>
+                <button onClick={() => { setCursor(new Date(year, month + 1, 1)); setSelectedKey(null) }} className="w-8 h-8 rounded-full border border-line hover:bg-sand text-sm">›</button>
+              </div>
             </div>
-          </div>
-          <div className="grid grid-cols-7 gap-1.5 text-center text-[11px] text-muted uppercase mb-2">
-            {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map((d, i) => <div key={i}>{d}</div>)}
-          </div>
-          <div className="grid grid-cols-7 gap-1.5">
-            {cells.map((d, i) => {
-              if (!d) return <div key={i} />
-              const key = `${year}-${month}-${d}`
-              const dayEvents = eventsByDay.get(key) || []
-              const first = dayEvents[0]
-              const meta = first ? KIND_META[first.kind] : null
-              const isToday = key === todayKey
-              const isSelected = key === selectedKey
-              return (
-                <button
-                  key={i}
-                  onClick={() => handleDayClick(key, dayEvents)}
-                  className={`aspect-square sm:aspect-auto sm:h-20 rounded-xl p-1.5 flex flex-col items-start text-left transition overflow-hidden ${
-                    dayEvents.length ? 'border-2' : isToday ? 'border border-clay/40 bg-sand' : 'border border-transparent hover:bg-sand'
-                  }`}
-                  style={dayEvents.length ? { borderColor: isSelected ? meta.color : meta.color + '55', background: isSelected ? meta.color : meta.color + '14' } : undefined}
-                >
-                  <span className={`text-xs font-medium ${dayEvents.length ? (isSelected ? 'text-white' : 'text-ink') : isToday ? 'text-clay font-semibold' : 'text-ink/70'}`}>{d}</span>
-                  {dayEvents.length > 0 && (
-                    <span className={`hidden sm:block text-[10px] leading-tight mt-1 ${isSelected ? 'text-white' : 'text-ink/80'}`}>
-                      {meta.icon} {first.client}
-                      <span className="block opacity-70">{KIND_META[first.kind].label}</span>
-                      {dayEvents.length > 1 && <span className="block opacity-70">+{dayEvents.length - 1} mais</span>}
-                    </span>
-                  )}
-                </button>
-              )
-            })}
+            <div className="grid grid-cols-7 gap-1.5 text-center text-[11px] text-muted uppercase mb-2">
+              {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map((d, i) => <div key={i}>{d}</div>)}
+            </div>
+            <div className="grid grid-cols-7 gap-1.5">
+              {cells.map((d, i) => {
+                if (!d) return <div key={i} />
+                const key = `${year}-${month}-${d}`
+                const dayEvents = eventsByDay.get(key) || []
+                const first = dayEvents[0]
+                const meta = first ? KIND_META[first.kind] : null
+                const isToday = key === todayKey
+                const isSelected = key === selectedKey
+                return (
+                  <button
+                    key={i}
+                    onClick={() => handleDayClick(key, dayEvents)}
+                    className={`aspect-square sm:aspect-auto sm:h-20 rounded-xl p-1.5 flex flex-col items-start text-left transition overflow-hidden ${
+                      dayEvents.length ? 'border-2' : isToday ? 'border border-clay/40 bg-sand' : 'border border-transparent hover:bg-sand'
+                    }`}
+                    style={dayEvents.length ? { borderColor: isSelected ? meta.color : meta.color + '55', background: isSelected ? meta.color : meta.color + '14' } : undefined}
+                  >
+                    <span className={`text-xs font-medium ${dayEvents.length ? (isSelected ? 'text-white' : 'text-ink') : isToday ? 'text-clay font-semibold' : 'text-ink/70'}`}>{d}</span>
+                    {dayEvents.length > 0 && (
+                      <span className={`hidden sm:block text-[10px] leading-tight mt-1 ${isSelected ? 'text-white' : 'text-ink/80'}`}>
+                        {meta.icon} {first.client}
+                        <span className="block opacity-70">{KIND_META[first.kind].label}</span>
+                        {dayEvents.length > 1 && <span className="block opacity-70">+{dayEvents.length - 1} mais</span>}
+                      </span>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+
+            {selectedEvents.length > 0 && (
+              <div className="mt-5 pt-5 border-t border-line divide-y divide-line">
+                {selectedEvents.map((e, i) => (
+                  <EventRow key={i} e={e} onOpen={() => openEvent(e)} onToggle={() => toggleCompleted(e)} />
+                ))}
+              </div>
+            )}
           </div>
 
-          {selectedEvents.length > 0 && (
-            <div className="mt-5 pt-5 border-t border-line divide-y divide-line">
-              {selectedEvents.map((e, i) => (
-                <EventRow key={i} e={e} onOpen={() => openEvent(e)} onRemove={e.eventId ? () => removeCustomEvent(e.eventId) : null} />
+          {/* lista completa, estilo checklist */}
+          <div className="bg-white border border-line rounded-2xl overflow-hidden">
+            <div className="px-5 py-3 border-b border-line">
+              <h3 className="font-medium text-ink text-sm">Todos os compromissos</h3>
+            </div>
+            <div className="divide-y divide-line max-h-[420px] overflow-y-auto">
+              {events.map((e, i) => (
+                <EventRow key={i} e={e} onOpen={() => openEvent(e)} onToggle={() => toggleCompleted(e)} detailed />
               ))}
             </div>
-          )}
-        </div>
+          </div>
+        </>
       )}
     </div>
   )
 }
 
-function EventRow({ e, onOpen, onRemove }) {
+function EventRow({ e, onOpen, onToggle, detailed }) {
   const meta = KIND_META[e.kind]
   return (
-    <div className="w-full text-left text-sm px-3 py-2.5 flex items-center gap-2.5">
-      <span>{meta.icon}</span>
-      <button onClick={onOpen} disabled={!e.proposalId} className="flex-1 text-left disabled:cursor-default">
-        <span className="text-muted">{e.title || meta.label} — </span><strong>{e.client}</strong>
-        <span className="block text-xs text-muted">{e.date.toLocaleDateString('pt-BR')}</span>
+    <div className={`w-full text-left text-sm px-3 py-2.5 flex items-center gap-2.5 ${e.completed ? 'opacity-50' : ''}`}>
+      {e.kind === 'custom' ? (
+        <input type="checkbox" checked={!!e.completed} onChange={(ev) => { ev.stopPropagation(); onToggle() }} className="shrink-0" />
+      ) : (
+        <span>{meta.icon}</span>
+      )}
+      <button onClick={onOpen} className="flex-1 text-left min-w-0">
+        <span className={e.completed ? 'line-through' : ''}>
+          <span className="text-muted">{e.title || meta.label} — </span><strong>{e.client}</strong>
+        </span>
+        <span className="block text-xs text-muted">
+          {e.date.toLocaleDateString('pt-BR')} · {e.date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+          {detailed && e.tipologia && <span className="capitalize"> · {e.tipologia}</span>}
+        </span>
       </button>
-      {e.proposalId && <span className="text-xs text-muted">→</span>}
-      {onRemove && <button onClick={onRemove} className="text-xs text-red-600 shrink-0">remover</button>}
+      <span className="text-xs text-muted shrink-0">{e.kind === 'custom' ? 'editar' : '→'}</span>
     </div>
   )
 }
 
-function NewEventForm({ proposals, onClose, onSaved }) {
-  const [title, setTitle] = useState('')
-  const [client, setClient] = useState('')
-  const [date, setDate] = useState('')
-  const [proposalId, setProposalId] = useState('')
+function NewEventForm({ proposals, editingEvent, onClose, onSaved, onDelete }) {
+  const [title, setTitle] = useState(editingEvent?.title || '')
+  const [client, setClient] = useState(editingEvent?.client || '')
+  const [date, setDate] = useState(editingEvent ? toLocalInputValue(editingEvent.date) : '')
+  const [proposalId, setProposalId] = useState(editingEvent?.proposalId || '')
 
   function handleProposalPick(id) {
     setProposalId(id)
@@ -252,12 +282,16 @@ function NewEventForm({ proposals, onClose, onSaved }) {
 
   function submit() {
     if (!title || !date) { alert('Preencha ao menos o título e a data.'); return }
-    onSaved({ title, client: client || 'Sem cliente vinculado', date, proposalId: proposalId || null })
+    onSaved({
+      id: editingEvent?.eventId,
+      title, client: client || 'Sem cliente vinculado', date, proposalId: proposalId || null,
+      completed: editingEvent?.completed || false,
+    })
   }
 
   return (
     <div className="bg-white border border-line rounded-2xl p-5 mb-6">
-      <h3 className="font-medium text-ink mb-3">Novo compromisso</h3>
+      <h3 className="font-medium text-ink mb-3">{editingEvent ? 'Editar compromisso' : 'Novo compromisso'}</h3>
       <div className="space-y-3">
         <div>
           <label className="text-xs text-muted block mb-1">Título</label>
@@ -284,12 +318,18 @@ function NewEventForm({ proposals, onClose, onSaved }) {
           <input type="datetime-local" value={date} onChange={(e) => setDate(e.target.value)} className="text-sm p-2 rounded-lg border border-line outline-none focus:border-clay" />
         </div>
       </div>
-      <div className="flex gap-2 mt-4">
+      <div className="flex gap-2 mt-4 items-center">
         <button onClick={onClose} className="text-sm px-4 py-2 rounded-full border border-line text-ink/70 hover:bg-sand">Cancelar</button>
         <button onClick={submit} className="text-sm px-4 py-2 rounded-full bg-ink text-white hover:opacity-90">Salvar compromisso</button>
+        {onDelete && <button onClick={onDelete} className="text-sm px-4 py-2 rounded-full text-red-600 hover:bg-red-50 ml-auto">Excluir</button>}
       </div>
     </div>
   )
+}
+
+function toLocalInputValue(date) {
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
 function parseBrDate(s) {
