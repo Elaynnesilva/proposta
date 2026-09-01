@@ -190,6 +190,46 @@ export function mesesParaTexto(valor, toleranciaDias = 2) {
   return `≈ ${base} (+ ${toleranciaDias} dias de tolerância)`
 }
 
+/** Converte um link comum do YouTube/Vimeo (compartilhamento, watch, youtu.be) para o formato
+ *  de incorporação (/embed/), que é o único que funciona dentro de um iframe. */
+export function toEmbedUrl(url) {
+  const u = (url || '').trim()
+  if (!u) return u
+  let m = u.match(/youtu\.be\/([\w-]+)/)
+  if (m) return `https://www.youtube.com/embed/${m[1]}`
+  m = u.match(/youtube\.com\/watch\?v=([\w-]+)/)
+  if (m) return `https://www.youtube.com/embed/${m[1]}`
+  m = u.match(/youtube\.com\/shorts\/([\w-]+)/)
+  if (m) return `https://www.youtube.com/embed/${m[1]}`
+  m = u.match(/vimeo\.com\/(\d+)/)
+  if (m) return `https://player.vimeo.com/video/${m[1]}`
+  return u
+}
+
+/**
+ * Mesma conversão de mesesParaTexto, mas para uso na APRESENTAÇÃO (texto limpo, sem
+ * anotações internas): a margem de tolerância já vai somada dentro dos dias, sem aparecer
+ * como nota separada. Ex: 1,62 -> "1 mês e 21 dias" (19 dias base + 2 de tolerância).
+ */
+export function mesesParaTextoApresentacao(valor, toleranciaDias = 2) {
+  if (!hasValue(valor)) return ''
+  const n = parseFloat(String(valor).replace(',', '.'))
+  if (isNaN(n)) return ''
+  const meses = Math.floor(n)
+  const dias = Math.round((n - meses) * 30) + toleranciaDias
+  const partes = []
+  if (meses > 0) partes.push(`${meses} ${meses === 1 ? 'mês' : 'meses'}`)
+  if (dias > 0) partes.push(`${dias} dias`)
+  return partes.length ? partes.join(' e ') : '0 dias'
+}
+
+/** Extrai um número puro de um valor em formato de dinheiro BR ("R$ 3.325,87" -> 3325.87) */
+export function parseMoneyBR(v) {
+  if (v === undefined || v === null || v === '') return null
+  const n = typeof v === 'number' ? v : parseFloat(String(v).replace('R$', '').replace(/\./g, '').replace(',', '.').trim())
+  return isNaN(n) ? null : n
+}
+
 /** Formata número como moeda BRL quando fizer sentido */
 export function money(v) {
   if (v === undefined || v === null || v === '') return ''

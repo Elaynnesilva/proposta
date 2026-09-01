@@ -5,6 +5,7 @@ import Layout from './components/Layout'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import Editor from './pages/Editor'
+import Agenda from './pages/Agenda'
 import Settings from './pages/Settings'
 import Presenter from './pages/Presenter'
 
@@ -46,6 +47,7 @@ export default function App() {
             <Routes>
               <Route path="/" element={<Dashboard />} />
               <Route path="/proposta/:id/editar" element={<Editor />} />
+              <Route path="/agenda" element={<Agenda />} />
               <Route path="/configuracoes" element={<Settings />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>

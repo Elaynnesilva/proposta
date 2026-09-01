@@ -4,6 +4,7 @@ import { getProposal, getSettings, getTemplateContent, saveProposal, saveTemplat
 import { buildSlides } from '../lib/slides'
 import { DEFAULT_IMAGES, DEFAULT_SHARED_TEXT } from '../lib/content'
 import { STYLE, paletteToCssVars, readableTextColor, isLowContrast, DEFAULT_PALETTE, FIXED_SWATCHES } from '../lib/templates'
+import { toEmbedUrl } from '../lib/fields'
 
 const SLIDE_ICONS = {
   cover: '🏠', agenda: '📋', profile: '👩‍🎨', divider: '—', clientRequest: '🗂️',
@@ -14,7 +15,7 @@ const SLIDE_ICONS = {
 
 // slides cujo conteúdo vem de textos compartilhados (Configurações > Textos padrão) —
 // só esses ganham a opção de "aplicar em todas as propostas" na edição rápida
-const GLOBAL_EDITABLE_SLIDES = new Set(['agenda', 'about', 'reasons', 'stages', 'feedbacks', 'closing'])
+const GLOBAL_EDITABLE_SLIDES = new Set(['agenda', 'about', 'reasons', 'stages', 'feedbacks', 'closing', 'journey'])
 
 const EXPORT_W = 1600
 const EXPORT_H = 900
@@ -152,6 +153,14 @@ export default function Presenter() {
   }
 
   /** Salva o vídeo principal no nível certo: só esta proposta, este tipo de projeto, ou todos os tipos. */
+  /** Atualiza campos de "Dados do projeto" direto pelo slide (ex: Descrição do projeto),
+   *  garantindo que fique sincronizado com a aba "Dados do projeto" do editor. */
+  async function saveFieldsPatch(patch) {
+    const next = { ...proposal, fields: { ...(proposal.fields || {}), ...patch } }
+    setProposal(next)
+    await saveProposal(next)
+  }
+
   async function saveVideoByScope(scope, patch) {
     if (scope === 'proposal') {
       saveOverridePerProposal('video', patch)
@@ -264,6 +273,7 @@ export default function Presenter() {
               allowGlobal={GLOBAL_EDITABLE_SLIDES.has(slide.id)}
               onSave={(patch, scope) => { scope === 'global' ? saveGlobalContent(slide.id, patch) : saveOverridePerProposal(slide.id, patch) }}
               onSaveVideoScope={(scope, patch) => saveVideoByScope(scope, patch)}
+              onSaveFields={saveFieldsPatch}
               onClose={() => setEditing(false)}
             />
           )}
@@ -295,6 +305,10 @@ function mapPatchToSharedContent(slideId, patch, shared) {
     if (patch.items?.[1] !== undefined) next.aboutRegistration = patch.items[1]
   } else if (slideId === 'reasons') {
     if (patch.title !== undefined) next.reasonsTitle = patch.title
+    if (patch.items !== undefined) next.reasons = patch.items
+  } else if (slideId === 'journey') {
+    if (patch.subtitle !== undefined) next.journeySubtitle = patch.subtitle
+    if (patch.items !== undefined) next.journey = patch.items
   } else if (slideId === 'stages') {
     if (patch.title !== undefined) next.stagesTitle = patch.title
     if (patch.stages !== undefined) next.stages = patch.stages
@@ -444,7 +458,9 @@ function ImagePositionPicker({ image, onChange }) {
   )
 }
 
-function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALETTE, proposal, onSaveVideoScope }) {
+const COLOR_CUSTOMIZABLE_TYPES = new Set(['divider', 'agenda', 'profile', 'clientRequest', 'reasons', 'scopeSection', 'modeling', 'journeyFlow', 'stages', 'feedbacks', 'pricingCalc', 'packagePricing', 'custom', 'closing'])
+
+function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALETTE, proposal, onSaveVideoScope, onSaveFields }) {
   // padrão é "todas as propostas" apenas quando essa opção existe pro tipo de slide (allowGlobal);
   // do contrário, o escopo é sempre "só esta proposta" — bug crítico corrigido aqui: antes disso,
   // slides sem a opção de escopo (título, imagens, vídeo…) tentavam salvar como "global" por engano
@@ -462,12 +478,20 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
   const isStages = slide.type === 'stages'
   const [stages, setStages] = useState(() => (slide.stages ? JSON.parse(JSON.stringify(slide.stages)) : []))
   const [footnote, setFootnote] = useState(slide.footnote || '')
+  const isReasons = slide.type === 'reasons'
+  const [reasonsList, setReasonsList] = useState(() => (isReasons && Array.isArray(slide.items) ? JSON.parse(JSON.stringify(slide.items)) : []))
   const isFeedbacks = slide.type === 'feedbacks'
   const [feedbacks, setFeedbacks] = useState(() => (isFeedbacks && Array.isArray(slide.items) ? JSON.parse(JSON.stringify(slide.items)) : []))
   const isMultiImage = slide.type === 'scopeSection' || slide.type === 'modeling'
   const [images, setImages] = useState(() => effectiveImages(slide))
   const [imageLayout, setImageLayout] = useState(slide.imageLayout || 'row')
   const [adjustingIdx, setAdjustingIdx] = useState(null)
+  const hasSingleImage = 'image' in slide && !isMultiImage && slide.type !== 'cover'
+  const [singleImage, setSingleImage] = useState(slide.image || '')
+  const [noImage, setNoImage] = useState(!!slide.noImage)
+  const [imagePosition, setImagePosition] = useState(slide.imagePosition || 'left')
+  const isClientRequest = slide.type === 'clientRequest'
+  const [descricaoProjeto, setDescricaoProjeto] = useState(slide.descricaoProjeto || '')
   const isVideo = slide.type === 'video'
   const [embedUrl, setEmbedUrl] = useState(slide.embedUrl || '')
   const [videoScope, setVideoScope] = useState('proposal')
@@ -487,16 +511,15 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
     setImageLayout(slide.imageLayout || 'row')
     setEmbedUrl(slide.embedUrl || '')
     setAdjustingIdx(null)
+    setSingleImage(slide.image || '')
+    setNoImage(!!slide.noImage)
+    setImagePosition(slide.imagePosition || 'left')
+    setDescricaoProjeto(slide.descricaoProjeto || '')
     setStages(slide.stages ? JSON.parse(JSON.stringify(slide.stages)) : [])
     setFootnote(slide.footnote || '')
+    setReasonsList(slide.type === 'reasons' && Array.isArray(slide.items) ? JSON.parse(JSON.stringify(slide.items)) : [])
     setFeedbacks(slide.type === 'feedbacks' && Array.isArray(slide.items) ? JSON.parse(JSON.stringify(slide.items)) : [])
   }, [slide.id])
-
-  function handleImage(file) {
-    const reader = new FileReader()
-    reader.onload = () => onSave({ image: reader.result }, 'proposal') // imagens são sempre só desta proposta/tipologia
-    reader.readAsDataURL(file)
-  }
 
   function addImages(fileList) {
     const files = Array.from(fileList || [])
@@ -512,11 +535,15 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
     if (items) patch.items = items
     if (slide.type === 'divider') { patch.subtitle = subtitle; patch.bgColor = bgColor; patch.textColor = textColor }
     if (slide.type === 'journeyFlow') { patch.subtitle = subtitle; patch.stepImages = stepImages }
+    if (COLOR_CUSTOMIZABLE_TYPES.has(slide.type)) { patch.bgColor = bgColor; patch.textColor = textColor }
     if (isMultiImage) { patch.images = images; patch.imageLayout = imageLayout; patch.image = null; patch.image2 = null; patch.description = description }
+    if (hasSingleImage) { patch.image = singleImage; patch.noImage = noImage; patch.imagePosition = imagePosition }
+    if (isClientRequest) { onSaveFields?.({ descricaoProjeto }) }
     if (isStages) { patch.stages = stages; patch.footnote = footnote }
+    if (isReasons) { patch.items = reasonsList }
     if (isFeedbacks) { patch.items = feedbacks }
     if (isVideo) {
-      onSaveVideoScope?.(videoScope, { videoUrl: '', videoPath: '', embedUrl })
+      onSaveVideoScope?.(videoScope, { videoUrl: '', videoPath: '', embedUrl: toEmbedUrl(embedUrl) })
       onClose()
       return
     }
@@ -550,11 +577,23 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
       <label className="text-xs font-medium text-ink/70 block mb-1">Título</label>
       <input value={title} onChange={(e) => setTitle(e.target.value)} className="w-full text-sm p-2.5 rounded-lg border border-line outline-none focus:border-clay mb-4" />
 
+      {isClientRequest && (
+        <>
+          <label className="text-xs font-medium text-ink/70 block mb-1">Descrição do projeto</label>
+          <textarea value={descricaoProjeto} onChange={(e) => setDescricaoProjeto(e.target.value)} rows={3} className="w-full text-sm p-2.5 rounded-lg border border-line outline-none focus:border-clay mb-1" placeholder="Ex: Reforma completa de interiores…" />
+          <p className="text-[11px] text-muted mb-4">Isso atualiza também o campo "Descrição do projeto" em Dados do projeto.</p>
+        </>
+      )}
+
       {slide.type === 'divider' && (
         <>
           <label className="text-xs font-medium text-ink/70 block mb-1">Subtítulo (opcional)</label>
           <textarea value={subtitle} onChange={(e) => setSubtitle(e.target.value)} rows={2} className="w-full text-sm p-2.5 rounded-lg border border-line outline-none focus:border-clay mb-4" placeholder="Uma linha de apoio abaixo do título…" />
+        </>
+      )}
 
+      {COLOR_CUSTOMIZABLE_TYPES.has(slide.type) && (
+        <>
           <label className="text-xs font-medium text-ink/70 block mb-1">Cor do fundo</label>
           <ColorSwatchRow palette={palette} value={bgColor} onChange={setBgColor} />
 
@@ -634,6 +673,31 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
         </div>
       )}
 
+      {isReasons && (
+        <div className="mb-4">
+          <label className="text-xs font-medium text-ink/70 block mb-1">Motivos</label>
+          {reasonsList.map((r, i) => (
+            <div key={i} className="border border-line rounded-lg p-3 mb-2">
+              <div className="flex items-center gap-2 mb-1.5">
+                <input
+                  value={r.title || ''}
+                  onChange={(e) => setReasonsList((prev) => prev.map((p, k) => k === i ? { ...p, title: e.target.value } : p))}
+                  className="flex-1 text-sm font-medium p-1.5 rounded border border-line outline-none focus:border-clay"
+                  placeholder="Título do motivo"
+                />
+                <button onClick={() => setReasonsList((prev) => prev.filter((_, k) => k !== i))} className="text-xs text-red-600 shrink-0">remover</button>
+              </div>
+              <textarea
+                value={r.body || ''} rows={2}
+                onChange={(e) => setReasonsList((prev) => prev.map((p, k) => k === i ? { ...p, body: e.target.value } : p))}
+                className="w-full text-xs p-2 rounded border border-line outline-none focus:border-clay"
+              />
+            </div>
+          ))}
+          <button onClick={() => setReasonsList((prev) => [...prev, { title: '', body: '' }])} className="text-xs text-clay">+ adicionar motivo</button>
+        </div>
+      )}
+
       {isStages && (
         <div className="mb-4">
           <label className="text-xs font-medium text-ink/70 block mb-1">Apresentações</label>
@@ -671,6 +735,9 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
                     reader.readAsDataURL(file)
                   }} />
                 </label>
+                {s.image && (
+                  <button onClick={() => setStages((prev) => prev.map((p, pi) => pi === i ? { ...p, image: '' } : p))} className="text-[11px] text-red-600">remover</button>
+                )}
               </div>
             </div>
           ))}
@@ -819,11 +886,37 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
             <button onClick={() => setImages([])} className="block text-xs text-muted hover:text-red-600 mt-2">remover todas (sem imagem)</button>
           )}
         </div>
-      ) : 'image' in slide && (
+      ) : hasSingleImage && (
         <div className="mb-4">
           <label className="text-xs font-medium text-ink/70 block mb-1">Imagem (só desta proposta)</label>
-          {slide.image && <img src={slide.image} className="w-full h-28 object-cover rounded-lg mb-2" alt="" />}
-          <input type="file" accept="image/*" onChange={(e) => e.target.files[0] && handleImage(e.target.files[0])} className="text-xs" />
+          <label className="flex items-center gap-2 text-xs mb-2 cursor-pointer">
+            <input type="checkbox" checked={noImage} onChange={(e) => setNoImage(e.target.checked)} />
+            Não usar imagem neste slide (o texto ocupa a página toda, justificado à esquerda)
+          </label>
+          {!noImage && (
+            <>
+              {singleImage && (
+                <div className="mb-2">
+                  <img src={singleImage} className="w-full h-28 object-cover rounded-lg mb-1" alt="" />
+                  <button onClick={() => setSingleImage('')} className="text-xs text-red-600">remover imagem</button>
+                </div>
+              )}
+              <label className="text-xs cursor-pointer text-clay font-medium block mb-3">
+                {singleImage ? 'Trocar imagem' : '+ adicionar imagem'}
+                <input type="file" accept="image/*" hidden onChange={(e) => {
+                  const file = e.target.files[0]; if (!file) return
+                  const reader = new FileReader()
+                  reader.onload = () => setSingleImage(reader.result)
+                  reader.readAsDataURL(file)
+                }} />
+              </label>
+              <label className="text-xs font-medium text-ink/70 block mb-1">Posição da imagem</label>
+              <div className="flex gap-2">
+                <button onClick={() => setImagePosition('left')} className={`text-xs px-3 py-1.5 rounded-full border ${imagePosition === 'left' ? 'bg-ink text-white border-ink' : 'border-line text-ink/70'}`}>Esquerda</button>
+                <button onClick={() => setImagePosition('right')} className={`text-xs px-3 py-1.5 rounded-full border ${imagePosition === 'right' ? 'bg-ink text-white border-ink' : 'border-line text-ink/70'}`}>Direita</button>
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -847,6 +940,17 @@ function SlideImage({ src, className, style }) {
 }
 
 const titleStyle = { fontFamily: STYLE.displayFont, fontWeight: STYLE.headingWeight, textTransform: STYLE.headingTransform, letterSpacing: STYLE.headingTracking }
+const SAND = '#F6F3EE'
+const INK = '#28313C'
+
+/** Resolve a cor de fundo e a cor de texto (contraste garantido) de um slide, considerando
+ *  a personalização que a pessoa escolheu no "Editar slide" (com um fundo padrão de reserva). */
+function slideColors(slide, fallbackBg) {
+  const bg = slide.bgColor || fallbackBg
+  const auto = readableTextColor(bg)
+  const heading = slide.textColor && !isLowContrast(slide.textColor, bg) ? slide.textColor : auto
+  return { bg, heading }
+}
 
 function SlideView({ slide, c1, c2, c3, revealCount, settings }) {
   const t2 = readableTextColor(c2)
@@ -876,24 +980,23 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings }) {
       )
 
     case 'divider': {
-      const bg = slide.bgColor || c2
-      const autoTxt = readableTextColor(bg)
-      const txt = slide.textColor && !isLowContrast(slide.textColor, bg) ? slide.textColor : autoTxt
+      const { bg, heading } = slideColors(slide, c2)
       return (
         <div className="w-full h-full flex flex-col items-center justify-center text-center px-10" style={{ background: bg }}>
-          <h2 className="auto-fade-item text-2xl md:text-4xl max-w-3xl" style={{ ...titleStyle, color: txt }}>{slide.title}</h2>
-          {slide.subtitle && <p className="auto-fade-item mt-5 max-w-xl" style={{ color: txt, opacity: 0.75, animationDelay: '120ms' }}>{slide.subtitle}</p>}
+          <h2 className="text-2xl md:text-4xl max-w-3xl" style={{ ...titleStyle, color: heading }}>{slide.title}</h2>
+          {slide.subtitle && <p className="mt-5 max-w-xl" style={{ color: heading, opacity: 0.75 }}>{slide.subtitle}</p>}
         </div>
       )
     }
 
-    case 'agenda':
+    case 'agenda': {
+      const { bg, heading } = slideColors(slide, SAND)
       return (
-        <SplitLayout image={slide.image} radius={radius}>
-          <h2 className="text-2xl md:text-3xl mb-8" style={titleStyle}>{slide.title}</h2>
-          <ol className="space-y-3">
+        <SplitLayout image={slide.image} radius={radius} noImage={slide.noImage} imagePosition={slide.imagePosition} bg={bg}>
+          <h2 className="text-2xl md:text-3xl mb-8" style={{ ...titleStyle, color: heading }}>{slide.title}</h2>
+          <ol className={slide.noImage ? 'grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-3' : 'space-y-3'}>
             {slide.items.map((it, i) => (
-              <Reveal key={i} i={i} revealCount={revealCount} className="flex gap-3 text-lg text-ink">
+              <Reveal key={i} i={i} revealCount={revealCount} className="flex gap-3 text-lg" style={{ color: heading }}>
                 <span style={{ color: c1 }} className="font-semibold">{i + 1}.</span>
                 <span>{it}</span>
               </Reveal>
@@ -901,37 +1004,41 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings }) {
           </ol>
         </SplitLayout>
       )
+    }
 
-    case 'profile':
+    case 'profile': {
+      const { bg, heading } = slideColors(slide, SAND)
       return (
-        <SplitLayout image={slide.image} radius={radius} imageRight>
+        <SplitLayout image={slide.image} radius={radius} imageRight noImage={slide.noImage} imagePosition={slide.imagePosition} bg={bg}>
           <div className="max-w-md">
-            <h2 className="auto-left-item text-2xl md:text-3xl mb-6" style={titleStyle}>{slide.title}</h2>
+            <h2 className="auto-left-item text-2xl md:text-3xl mb-6" style={{ ...titleStyle, color: heading }}>{slide.title}</h2>
             {/* todos os textos aparecem juntos, vindos da esquerda, sem precisar clicar */}
             {slide.items.map((it, i) => (
-              <p key={i} className="auto-left-item text-ink/80 whitespace-pre-line mb-4 leading-relaxed">{it}</p>
+              <p key={i} className="auto-left-item whitespace-pre-line mb-4 leading-relaxed" style={{ color: heading, opacity: 0.85 }}>{it}</p>
             ))}
           </div>
         </SplitLayout>
       )
+    }
 
-    case 'clientRequest':
+    case 'clientRequest': {
+      const { bg, heading } = slideColors(slide, SAND)
       return (
-        <SplitLayout image={slide.image} radius={radius}>
-          <h2 className="text-xl md:text-2xl mb-8" style={titleStyle}>{slide.title}</h2>
+        <SplitLayout image={slide.image} radius={radius} noImage={slide.noImage} imagePosition={slide.imagePosition} bg={bg}>
+          <h2 className="text-xl md:text-2xl mb-8" style={{ ...titleStyle, color: heading }}>{slide.title}</h2>
           <div className="space-y-4">
             {slide.rows.map(([label, value], i) => (
               <Reveal key={i} i={i} revealCount={revealCount}>
-                <div className="text-xs tracking-wide uppercase text-muted mb-0.5">{label}</div>
-                <div className="text-ink text-base">{value}</div>
+                <div className="text-xs tracking-wide uppercase mb-0.5" style={{ color: heading, opacity: 0.55 }}>{label}</div>
+                <div className="text-base" style={{ color: heading }}>{value}</div>
               </Reveal>
             ))}
             {slide.ambientes.length > 0 && (
               <Reveal i={slide.rows.length} revealCount={revealCount}>
-                <div className="text-xs tracking-wide uppercase text-muted mb-1">Ambientes {slide.quantAmbientes ? `(${slide.quantAmbientes})` : ''}</div>
+                <div className="text-xs tracking-wide uppercase mb-1" style={{ color: heading, opacity: 0.55 }}>Ambientes {slide.quantAmbientes ? `(${slide.quantAmbientes})` : ''}</div>
                 <div className="flex flex-wrap gap-2">
                   {slide.ambientes.map((a, k) => (
-                    <span key={k} className="text-sm px-2.5 py-1 bg-sand border border-line" style={{ borderRadius: radius }}>{a}</span>
+                    <span key={k} className="text-sm px-2.5 py-1 border" style={{ borderRadius: radius, borderColor: heading + '55', color: heading }}>{a}</span>
                   ))}
                 </div>
               </Reveal>
@@ -939,21 +1046,24 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings }) {
           </div>
         </SplitLayout>
       )
+    }
 
-    case 'reasons':
+    case 'reasons': {
+      const { bg, heading } = slideColors(slide, SAND)
       return (
-        <SplitLayout image={slide.image} radius={radius} imageRight>
-          <h2 className="text-xl md:text-2xl mb-6" style={titleStyle}>{slide.title}</h2>
+        <SplitLayout image={slide.image} radius={radius} imageRight noImage={slide.noImage} imagePosition={slide.imagePosition} bg={bg}>
+          <h2 className="text-xl md:text-2xl mb-6" style={{ ...titleStyle, color: heading }}>{slide.title}</h2>
           <div className="space-y-4">
             {slide.items.map((r, i) => (
               <Reveal key={i} i={i} revealCount={revealCount}>
                 <div className="font-semibold" style={{ color: c1 }}>{i + 1}. {r.title}</div>
-                <div className="text-base text-ink/75 mt-1">{r.body}</div>
+                <div className="text-base mt-1" style={{ color: heading, opacity: 0.8 }}>{r.body}</div>
               </Reveal>
             ))}
           </div>
         </SplitLayout>
       )
+    }
 
     case 'scopeSection':
       return <TopicImageSlide slide={slide} c1={c1} revealCount={revealCount} radius={radius} />
@@ -964,10 +1074,11 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings }) {
     case 'journeyFlow':
       return <JourneyFlowSlide slide={slide} c1={c1} c2={c2} t2={t2} revealCount={revealCount} radius={radius} />
 
-    case 'stages':
+    case 'stages': {
+      const { bg, heading } = slideColors(slide, SAND)
       return (
-        <div className="w-full h-full bg-sand p-10 md:p-16 overflow-auto">
-          <h2 className="text-2xl md:text-3xl mb-8" style={titleStyle}>{slide.title}</h2>
+        <div className="w-full h-full p-10 md:p-16 overflow-auto" style={{ background: bg }}>
+          <h2 className="text-2xl md:text-3xl mb-8" style={{ ...titleStyle, color: heading }}>{slide.title}</h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {slide.stages.map((s, i) => (
               <Reveal key={i} i={i} revealCount={revealCount} className="bg-white border border-line p-5 flex flex-col" style={{ borderRadius: radius }}>
@@ -977,17 +1088,19 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings }) {
               </Reveal>
             ))}
           </div>
-          {slide.footnote && <p className="text-sm text-muted mt-8 max-w-2xl">{slide.footnote}</p>}
+          {slide.footnote && <p className="text-sm mt-8 max-w-2xl" style={{ color: heading, opacity: 0.65 }}>{slide.footnote}</p>}
         </div>
       )
+    }
 
-    case 'feedbacks':
+    case 'feedbacks': {
+      const { bg, heading } = slideColors(slide, INK)
       return (
-        <div className="w-full h-full bg-ink text-white p-10 md:p-16 flex flex-col justify-center">
-          <h2 className="text-2xl md:text-4xl mb-10" style={titleStyle}>{slide.title}</h2>
+        <div className="w-full h-full p-10 md:p-16 flex flex-col justify-center" style={{ background: bg }}>
+          <h2 className="text-2xl md:text-4xl mb-10" style={{ ...titleStyle, color: heading }}>{slide.title}</h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {slide.items.map((fb, i) => (
-              <Reveal key={i} i={i} revealCount={revealCount} className="bg-white/10 overflow-hidden" style={{ borderRadius: radius }}>
+              <Reveal key={i} i={i} revealCount={revealCount} className="overflow-hidden" style={{ borderRadius: radius, background: heading === '#FFFFFF' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)' }}>
                 {fb.printUrl ? (
                   <img src={fb.printUrl} alt="" className="w-full h-full object-cover" />
                 ) : (
@@ -996,7 +1109,7 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings }) {
                       {fb.photoUrl && <img src={fb.photoUrl} crossOrigin="anonymous" className="w-9 h-9 rounded-full object-cover" alt="" />}
                       <div className="text-base font-semibold" style={{ color: c1 }}>{fb.name}</div>
                     </div>
-                    <div className="text-base text-white/85">{fb.text}</div>
+                    <div className="text-base" style={{ color: heading, opacity: 0.85 }}>{fb.text}</div>
                   </div>
                 )}
               </Reveal>
@@ -1004,58 +1117,68 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings }) {
           </div>
         </div>
       )
+    }
 
     case 'pricingCalc': {
+      const { bg, heading } = slideColors(slide, SAND)
       const lastTextStep = slide.items.length
       return (
-        <div className="w-full h-full bg-sand p-10 md:p-16 overflow-auto flex flex-col">
-          <h2 className="text-xl md:text-2xl mb-6" style={titleStyle}>{slide.title}</h2>
-          <ul className="space-y-2 max-w-xl">
-            {slide.items.map((it, i) => (<Reveal key={i} i={i} revealCount={revealCount} className="text-ink/80 text-base">• {it}</Reveal>))}
-          </ul>
+        <div className="w-full h-full p-10 md:p-16 overflow-auto flex flex-col md:flex-row md:items-center gap-10" style={{ background: bg }}>
+          <div className="flex-1">
+            <h2 className="text-xl md:text-2xl mb-6" style={{ ...titleStyle, color: heading }}>{slide.title}</h2>
+            <ul className="space-y-2 max-w-xl">
+              {slide.items.map((it, i) => (<Reveal key={i} i={i} revealCount={revealCount} className="text-base" style={{ color: heading, opacity: 0.85 }}>• {it}</Reveal>))}
+            </ul>
+          </div>
           {(slide.hourValue || slide.dayValue) && (
-            <Reveal i={lastTextStep} revealCount={revealCount} className="flex-1 flex items-center justify-center">
-              <div className="flex flex-col sm:flex-row gap-3">
-                {slide.hourValue && <PriceTag label="Hora técnica" value={slide.hourValue} radius={radius} c1={c1} />}
-                {slide.dayValue && <PriceTag label="Diária de trabalho" value={slide.dayValue} radius={radius} c1={c1} />}
-              </div>
+            <Reveal i={lastTextStep} revealCount={revealCount} className="flex flex-col gap-3 md:w-72 shrink-0">
+              {slide.hourValue && <PriceTag label="Hora técnica" value={slide.hourValue} radius={radius} c1={c1} big />}
+              {slide.dayValue && <PriceTag label="Diária de trabalho" value={slide.dayValue} radius={radius} c1={c1} big />}
             </Reveal>
           )}
         </div>
       )
     }
 
-    case 'packagePricing':
+    case 'packagePricing': {
+      const { bg, heading } = slideColors(slide, SAND)
       return (
-        <div className="w-full h-full bg-sand p-10 md:p-16 overflow-auto flex flex-col items-center justify-center text-center">
-          <div className="w-full max-w-2xl">
-            <h2 className="text-2xl md:text-3xl mb-2" style={titleStyle}>{slide.title}</h2>
-            <Reveal i={0} revealCount={revealCount}>
-              <div className="text-3xl font-semibold mb-2" style={{ color: c1, fontFamily: STYLE.displayFont }}>{slide.value}</div>
-              {slide.schedule.length > 0 && <div className="text-sm text-ink/60 mb-8">{slide.schedule.join(' · ')}</div>}
-            </Reveal>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-left">
-              {slide.paymentCards.map((p, i) => (
-                <Reveal
-                  key={p.id} i={i + 1} revealCount={revealCount}
-                  className="p-5"
-                  style={{
-                    borderRadius: radius,
-                    background: p.highlight ? c2 : 'white',
-                    color: p.highlight ? t2 : '#28313C',
-                    border: p.highlight ? 'none' : '1px solid #E4DFD6',
-                    boxShadow: p.highlight ? '0 8px 24px rgba(0,0,0,0.12)' : 'none',
-                  }}
-                >
-                  <div className="text-xs uppercase tracking-wide opacity-70 mb-1">{p.label}{p.highlight ? ' ★' : ''}</div>
-                  <div className="text-xl font-semibold mb-1" style={{ color: p.highlight ? c1OnC2 : c1, fontFamily: STYLE.displayFont }}>{p.value}</div>
-                  {p.detail && <div className="text-xs opacity-70">{p.detail}</div>}
-                </Reveal>
-              ))}
+        <div className="w-full h-full p-10 md:p-16 overflow-auto" style={{ background: bg }}>
+          <h2 className="text-2xl md:text-3xl mb-8" style={{ ...titleStyle, color: heading }}>{slide.title}</h2>
+          <Reveal i={0} revealCount={revealCount} className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6 max-w-3xl">
+            <div className="p-6 bg-white border border-line" style={{ borderRadius: radius }}>
+              <div className="text-xs uppercase tracking-wide opacity-60 mb-1" style={{ color: heading }}>Valor do pacote</div>
+              <div className="text-2xl font-semibold" style={{ color: c1, fontFamily: STYLE.displayFont }}>{slide.value}</div>
             </div>
+            {slide.schedule.length > 0 && (
+              <div className="p-6 bg-white border border-line" style={{ borderRadius: radius }}>
+                <div className="text-xs uppercase tracking-wide opacity-60 mb-1" style={{ color: heading }}>Prazo do projeto</div>
+                <div className="text-sm" style={{ color: heading, opacity: 0.8 }}>{slide.schedule.join(' · ')}</div>
+              </div>
+            )}
+          </Reveal>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-3xl">
+            {slide.paymentCards.map((p, i) => (
+              <Reveal
+                key={p.id} i={i + 1} revealCount={revealCount}
+                className="p-5 text-left"
+                style={{
+                  borderRadius: radius,
+                  background: p.highlight ? c2 : 'white',
+                  color: p.highlight ? t2 : '#28313C',
+                  border: p.highlight ? 'none' : '1px solid #E4DFD6',
+                  boxShadow: p.highlight ? '0 8px 24px rgba(0,0,0,0.12)' : 'none',
+                }}
+              >
+                <div className="text-xs uppercase tracking-wide opacity-70 mb-1">{p.label}{p.highlight ? ' ★' : ''}</div>
+                <div className="text-xl font-semibold mb-1" style={{ color: p.highlight ? c1OnC2 : c1, fontFamily: STYLE.displayFont }}>{p.value}</div>
+                {p.detail && <div className="text-xs opacity-70">{p.detail}</div>}
+              </Reveal>
+            ))}
           </div>
         </div>
       )
+    }
 
     case 'video':
       return (
@@ -1066,7 +1189,7 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings }) {
           {slide.videoUrl ? (
             <video src={slide.videoUrl} controls className="max-w-full max-h-full" style={{ borderRadius: STYLE.radius }} />
           ) : slide.embedUrl ? (
-            <iframe src={slide.embedUrl} className="w-full h-full" style={{ borderRadius: STYLE.radius }} allowFullScreen title="video" />
+            <iframe src={slide.embedUrl} className="w-full h-full" style={{ borderRadius: STYLE.radius }} allowFullScreen allow="autoplay; encrypted-media; picture-in-picture" title="video" />
           ) : (
             <div className="text-white/50 text-center">
               <div className="text-4xl mb-3">▶</div>
@@ -1077,18 +1200,19 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings }) {
         </div>
       )
 
-    case 'custom':
+    case 'custom': {
+      const { bg, heading } = slideColors(slide, SAND)
       return (
-        <div className="w-full h-full bg-sand grid grid-cols-1 md:grid-cols-2">
+        <div className="w-full h-full grid grid-cols-1 md:grid-cols-2" style={{ background: bg }}>
           <div className="p-10 md:p-16 flex flex-col justify-center order-2 md:order-1">
-            <h2 className="text-2xl md:text-3xl mb-6" style={titleStyle}>{slide.title}</h2>
+            <h2 className="text-2xl md:text-3xl mb-6" style={{ ...titleStyle, color: heading }}>{slide.title}</h2>
             {(slide.items || [slide.body]).filter(Boolean).map((it, i) => (
-              <Reveal key={i} i={i} revealCount={revealCount} className="text-ink/80 mb-3 whitespace-pre-line">{it}</Reveal>
+              <Reveal key={i} i={i} revealCount={revealCount} className="mb-3 whitespace-pre-line" style={{ color: heading, opacity: 0.85 }}>{it}</Reveal>
             ))}
           </div>
           <div className="order-1 md:order-2 relative">
             {slide.embedUrl ? (
-              <iframe src={slide.embedUrl} className="w-full h-full" allowFullScreen title="video" />
+              <iframe src={slide.embedUrl} className="w-full h-full" allowFullScreen allow="autoplay; encrypted-media; picture-in-picture" title="video" />
             ) : slide.videoUrl ? (
               <video src={slide.videoUrl} controls className="w-full h-full object-cover" />
             ) : (
@@ -1097,15 +1221,19 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings }) {
           </div>
         </div>
       )
+    }
 
-    case 'closing':
+    case 'closing': {
+      const { bg, heading } = slideColors(slide, c2)
+      const quoteColor = slide.textColor && !isLowContrast(slide.textColor, bg) ? slide.textColor : c1OnC2
       return (
-        <div className="w-full h-full flex flex-col items-center justify-center text-center px-10" style={{ background: c2 }}>
-          <h2 className="text-xl md:text-2xl mb-6" style={{ ...titleStyle, color: t2, opacity: 0.9 }}>{slide.headline}</h2>
-          <p className="text-xl md:text-2xl italic max-w-2xl" style={{ color: c1OnC2, fontFamily: STYLE.displayFont }}>&ldquo;{slide.quote}&rdquo;</p>
-          {slide.author && <p className="text-sm mt-4 tracking-wide" style={{ color: t2, opacity: 0.6 }}>{slide.author}</p>}
+        <div className="w-full h-full flex flex-col items-center justify-center text-center px-10" style={{ background: bg }}>
+          <h2 className="text-xl md:text-2xl mb-6" style={{ ...titleStyle, color: heading, opacity: 0.9 }}>{slide.headline}</h2>
+          <p className="text-xl md:text-2xl italic max-w-2xl" style={{ color: quoteColor, fontFamily: STYLE.displayFont }}>&ldquo;{slide.quote}&rdquo;</p>
+          {slide.author && <p className="text-sm mt-4 tracking-wide" style={{ color: heading, opacity: 0.6 }}>{slide.author}</p>}
         </div>
       )
+    }
 
     default:
       return <div className="w-full h-full flex items-center justify-center text-white/50">Slide</div>
@@ -1114,10 +1242,11 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings }) {
 
 function JourneyFlowSlide({ slide, c1, c2, t2, revealCount, radius }) {
   const stepImages = slide.stepImages || []
+  const { bg, heading } = slideColors(slide, SAND)
   return (
-    <div className="w-full h-full bg-sand p-8 md:p-14 overflow-auto">
-      <h2 className="text-2xl md:text-4xl mb-2" style={titleStyle}>{slide.title}</h2>
-      <p className="text-sm text-muted mb-8">{slide.subtitle}</p>
+    <div className="w-full h-full p-8 md:p-14 overflow-auto" style={{ background: bg }}>
+      <h2 className="text-2xl md:text-4xl mb-2" style={{ ...titleStyle, color: heading }}>{slide.title}</h2>
+      <p className="text-sm mb-8" style={{ color: heading, opacity: 0.6 }}>{slide.subtitle}</p>
       <div className="flex flex-wrap gap-x-3 gap-y-4">
         {slide.items.map((it, i) => (
           <Reveal key={i} i={i} revealCount={revealCount} className="flex items-center gap-3">
@@ -1142,21 +1271,34 @@ function iconGlyph(key) {
   return map[key] || '📄'
 }
 
-function PriceTag({ label, value, radius, c1 }) {
+function PriceTag({ label, value, radius, c1, big }) {
   return (
-    <div className="bg-white border border-line p-4" style={{ borderRadius: radius }}>
-      <div className="text-xs uppercase tracking-wide text-muted mb-1">{label}</div>
-      <div className="text-lg font-semibold" style={{ color: c1 }}>{value}</div>
+    <div className={`bg-white border border-line ${big ? 'p-6' : 'p-4'}`} style={{ borderRadius: radius }}>
+      <div className={`uppercase tracking-wide text-muted mb-1 ${big ? 'text-sm' : 'text-xs'}`}>{label}</div>
+      <div className={`font-semibold ${big ? 'text-2xl' : 'text-lg'}`} style={{ color: c1, fontFamily: STYLE.displayFont }}>{value}</div>
     </div>
   )
 }
 
-function SplitLayout({ image, radius, imageRight = false, children }) {
-  const text = <div className="p-10 md:p-16 flex flex-col justify-center overflow-auto">{children}</div>
+/**
+ * Layout de duas colunas usado em vários slides. Se noImage, o texto ocupa a página toda,
+ * justificado à esquerda, em duas colunas (mais fácil de ler do que uma coluna estreita).
+ * imagePosition escolhe se a imagem fica à esquerda ou à direita (some no celular de qualquer forma).
+ */
+function SplitLayout({ image, radius, imageRight = false, imagePosition, noImage, bg, children }) {
+  if (noImage) {
+    return (
+      <div className="w-full h-full overflow-auto" style={{ background: bg || SAND }}>
+        <div className="p-10 md:p-16 max-w-4xl mx-auto">{children}</div>
+      </div>
+    )
+  }
+  const onRight = imagePosition ? imagePosition === 'right' : imageRight
+  const text = <div className="p-10 md:p-16 flex flex-col justify-center overflow-auto" style={{ background: bg || SAND }}>{children}</div>
   const img = <SlideImage src={image} className="w-full h-full" />
   return (
-    <div className="w-full h-full grid grid-cols-1 md:grid-cols-2 bg-sand">
-      {imageRight ? (<>{text}<div className="hidden md:block">{img}</div></>) : (<><div className="hidden md:block">{img}</div>{text}</>)}
+    <div className="w-full h-full grid grid-cols-1 md:grid-cols-2">
+      {onRight ? (<>{text}<div className="hidden md:block">{img}</div></>) : (<><div className="hidden md:block">{img}</div>{text}</>)}
     </div>
   )
 }
@@ -1171,35 +1313,49 @@ function TopicImageSlide({ slide, c1, revealCount, radius }) {
   const imgs = effectiveImages(slide)
   const layout = slide.imageLayout || 'row'
   const hasImages = imgs.length > 0
+  const { bg, heading } = slideColors(slide, SAND)
 
   return (
-    <div className="w-full h-full bg-sand p-8 md:p-14 overflow-auto flex flex-col">
-      <h2 className="auto-fade-item text-center text-2xl md:text-3xl mb-2" style={titleStyle}>{slide.title}</h2>
+    <div className="w-full h-full p-8 md:p-14 overflow-hidden flex flex-col" style={{ background: bg }}>
+      <h2 className="text-center text-2xl md:text-3xl mb-2 shrink-0" style={{ ...titleStyle, color: heading }}>{slide.title}</h2>
       {slide.description && (
-        <p className="auto-fade-item text-center text-ink/70 max-w-2xl mx-auto mb-6" style={{ animationDelay: '80ms' }}>{slide.description}</p>
+        <p className="text-center max-w-2xl mx-auto mb-4 shrink-0" style={{ color: heading, opacity: 0.7 }}>{slide.description}</p>
       )}
 
-      <div className={hasImages ? 'mb-8' : 'flex-1 flex items-center'}>
-        <div className={hasImages ? 'flex flex-wrap gap-x-8 gap-y-2' : 'grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-3 w-full max-w-3xl mx-auto'}>
-          {slide.items.map((it, i) => (
-            <div key={i} className={`auto-left-item flex items-start gap-2 text-ink/80 ${hasImages ? '' : 'text-lg'}`} style={{ animationDelay: `${i * 40}ms` }}>
-              <span style={{ color: c1 }}>●</span><span>{it}</span>
-            </div>
-          ))}
-        </div>
+      {/* tópicos sempre empilhados, um abaixo do outro — nunca lado a lado */}
+      <div className={`shrink-0 space-y-2 mb-4 ${hasImages ? 'max-w-xl' : 'max-w-3xl mx-auto w-full text-center'}`}>
+        {slide.items.map((it, i) => (
+          <div key={i} className="auto-left-item flex items-start gap-2" style={{ animationDelay: `${i * 40}ms`, color: heading, opacity: 0.85, justifyContent: hasImages ? 'flex-start' : 'center' }}>
+            <span style={{ color: c1 }}>●</span><span>{it}</span>
+          </div>
+        ))}
       </div>
 
+      {/* área reservada para as imagens: tamanho fixo, então o slide nunca cresce além da tela,
+          não importa o tamanho ou a quantidade de fotos enviadas */}
       {hasImages && (
-        <div className={layout === 'grid' ? 'grid grid-cols-2 gap-3 flex-1 min-h-0' : 'flex flex-wrap gap-3 flex-1 min-h-0'}>
-          {imgs.map((img, i) => (
-            <Reveal
-              key={i} i={i} revealCount={revealCount}
-              className="overflow-hidden bg-[#DDD6C8]"
-              style={{ borderRadius: radius, flex: layout === 'row' ? '1 1 0' : undefined, aspectRatio: RATIO_CSS[img.ratio] || undefined, minWidth: layout === 'row' ? 160 : undefined }}
-            >
-              <SlideImage src={img.url} className="w-full h-full" style={{ objectPosition: `${img.posX ?? 50}% ${img.posY ?? 50}%` }} />
-            </Reveal>
-          ))}
+        <div className="flex-1 min-h-0">
+          {layout === 'grid' ? (
+            <div className="grid grid-cols-2 gap-3 h-full">
+              {imgs.map((img, i) => (
+                <div key={i} className="relative overflow-hidden bg-[#DDD6C8]" style={{ borderRadius: radius }}>
+                  <Reveal i={i} revealCount={revealCount} className="absolute inset-0">
+                    <SlideImage src={img.url} className="w-full h-full" style={{ objectPosition: `${img.posX ?? 50}% ${img.posY ?? 50}%` }} />
+                  </Reveal>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="flex gap-3 h-full">
+              {imgs.map((img, i) => (
+                <div key={i} className="flex-1 min-w-0 relative overflow-hidden bg-[#DDD6C8]" style={{ borderRadius: radius }}>
+                  <Reveal i={i} revealCount={revealCount} className="absolute inset-0">
+                    <SlideImage src={img.url} className="w-full h-full" style={{ objectPosition: `${img.posX ?? 50}% ${img.posY ?? 50}%` }} />
+                  </Reveal>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

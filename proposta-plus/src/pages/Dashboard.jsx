@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recharts'
-import { listProposals, saveProposal, deleteProposal } from '../lib/db'
-import { defaultFieldsObject, PACKAGE_LIST } from '../lib/fields'
+import { listProposals, saveProposal, deleteProposal, getSettings } from '../lib/db'
+import { defaultFieldsObject } from '../lib/fields'
 import { DEFAULT_PALETTE } from '../lib/templates'
 
 const STATUS = {
@@ -17,9 +17,13 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [renamingId, setRenamingId] = useState(null)
   const [valueModalId, setValueModalId] = useState(null)
+  const [settings, setSettings] = useState(null)
+  const [search, setSearch] = useState('')
+  const [filterTipologia, setFilterTipologia] = useState('todas')
+  const [filterStatus, setFilterStatus] = useState('todas')
   const navigate = useNavigate()
 
-  useEffect(() => { refresh() }, [])
+  useEffect(() => { refresh(); getSettings().then(setSettings) }, [])
 
   async function refresh() {
     setLoading(true)
@@ -74,8 +78,28 @@ export default function Dashboard() {
     ].filter((d) => d.value > 0)
   }, [proposals])
 
+  const filteredProposals = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    return proposals.filter((p) => {
+      if (filterTipologia !== 'todas' && p.tipologia !== filterTipologia) return false
+      if (filterStatus !== 'todas' && p.status !== filterStatus) return false
+      if (q && !(p.name || '').toLowerCase().includes(q) && !(p.fields?.nomeCliente || '').toLowerCase().includes(q)) return false
+      return true
+    })
+  }, [proposals, search, filterTipologia, filterStatus])
+
   return (
     <div className="p-6 md:p-10 max-w-6xl mx-auto">
+      {settings && (settings.logoDataUrl || settings.companyName) && (
+        <div className="flex items-center gap-3 mb-6">
+          {settings.logoDataUrl && <img src={settings.logoDataUrl} alt="logo" className="w-12 h-12 rounded-full object-cover border border-line" />}
+          <div>
+            {settings.companyName && <div className="font-display text-base text-ink leading-tight">{settings.companyName}</div>}
+            {settings.professionalName && <div className="text-xs text-muted leading-tight">{settings.professionalName}</div>}
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between mb-8 flex-wrap gap-4">
         <div>
           <h1 className="font-display text-3xl text-ink">Propostas</h1>
@@ -87,7 +111,7 @@ export default function Dashboard() {
       </div>
 
       {/* CRM highlights */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-10">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
         <div className="md:col-span-2 bg-ink text-white rounded-2xl p-6 flex flex-col justify-center">
           <div className="text-xs uppercase tracking-wide text-white/60 mb-2">Total recebido em propostas aceitas</div>
           <div className="font-display text-4xl" style={{ color: '#E0977E' }}>
@@ -112,8 +136,27 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Agenda — apresentações marcadas + prazos de propostas aceitas */}
-      <AgendaSection proposals={proposals} onOpen={(id) => navigate(`/proposta/${id}/editar`)} />
+      {/* Busca e filtros */}
+      {proposals.length > 0 && (
+        <div className="bg-white border border-line rounded-2xl p-4 mb-6 flex flex-col md:flex-row gap-3 md:items-center">
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="🔎 Buscar por nome da proposta ou do cliente…"
+            className="flex-1 text-sm p-2.5 rounded-lg border border-line outline-none focus:border-clay"
+          />
+          <div className="flex gap-1.5 flex-wrap">
+            {[['todas', 'Todas'], ['residencial', 'Residencial'], ['comercial', 'Comercial'], ['corporativo', 'Corporativo']].map(([id, label]) => (
+              <button key={id} onClick={() => setFilterTipologia(id)} className={`text-xs px-3 py-1.5 rounded-full border ${filterTipologia === id ? 'bg-ink text-white border-ink' : 'border-line text-ink/70 hover:bg-sand'}`}>{label}</button>
+            ))}
+          </div>
+          <div className="flex gap-1.5 flex-wrap">
+            {[['todas', 'Qualquer status'], ['aceita', 'Aceitas'], ['recusada', 'Recusadas']].map(([id, label]) => (
+              <button key={id} onClick={() => setFilterStatus(id)} className={`text-xs px-3 py-1.5 rounded-full border ${filterStatus === id ? 'bg-ink text-white border-ink' : 'border-line text-ink/70 hover:bg-sand'}`}>{label}</button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <div className="text-sm text-muted">Carregando…</div>
@@ -122,9 +165,11 @@ export default function Dashboard() {
           <p className="mb-4">Você ainda não criou nenhuma proposta.</p>
           <button onClick={createProposal} className="text-clay font-medium hover:underline">Criar a primeira proposta →</button>
         </div>
+      ) : filteredProposals.length === 0 ? (
+        <div className="text-center py-20 text-muted text-sm">Nenhuma proposta encontrada com esses filtros.</div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {proposals.map((p) => (
+          {filteredProposals.map((p) => (
             <div key={p.id} className="bg-white border border-line rounded-2xl p-5 flex flex-col">
               <div className="flex items-start justify-between gap-2 mb-3">
                 {renamingId === p.id ? (
@@ -145,7 +190,8 @@ export default function Dashboard() {
               </div>
 
               <div className="text-xs text-muted mb-1">{p.fields?.nomeCliente || 'Cliente não definido'}</div>
-              <div className="text-xs text-muted mb-4 capitalize">{p.tipologia}</div>
+              <div className="text-xs text-muted mb-1 capitalize">{p.tipologia}</div>
+              <div className="text-[11px] text-muted/80 mb-4">{formatProposalDate(p)}</div>
 
               {p.status === 'aceita' && p.acceptedValue != null && (
                 <div className="text-sm font-semibold mb-3" style={{ color: '#16803C' }}>
@@ -184,120 +230,15 @@ export default function Dashboard() {
   )
 }
 
-function AgendaSection({ proposals, onOpen }) {
-  const [cursor, setCursor] = useState(() => { const d = new Date(); d.setDate(1); return d })
-  const [selectedKey, setSelectedKey] = useState(null)
-
-  // extrai todos os eventos relevantes de todas as propostas: apresentações marcadas
-  // e, para propostas aceitas, o início/fim do primeiro pacote com data preenchida
-  const events = useMemo(() => {
-    const list = []
-    proposals.forEach((p) => {
-      if (p.scheduledAt) {
-        const d = new Date(p.scheduledAt)
-        if (!isNaN(d)) {
-          list.push({ date: d, label: `Apresentação — ${p.name || 'Sem nome'}`, proposalId: p.id, kind: 'apresentacao' })
-        }
-      }
-      if (p.status === 'aceita') {
-        const pkg = PACKAGE_LIST.find((pk) => parseBrDate(p.fields?.[`${pk.id}Inicio`]))
-        if (pkg) {
-          const inicio = parseBrDate(p.fields?.[`${pkg.id}Inicio`])
-          const fim = parseBrDate(p.fields?.[`${pkg.id}Fim`])
-          if (inicio) list.push({ date: inicio, label: `Início do projeto — ${p.name || 'Sem nome'}`, proposalId: p.id, kind: 'inicio' })
-          if (fim) list.push({ date: fim, label: `Entrega do projeto — ${p.name || 'Sem nome'}`, proposalId: p.id, kind: 'fim' })
-        }
-      }
-    })
-    return list
-  }, [proposals])
-
-  const eventsByDay = useMemo(() => {
-    const map = new Map()
-    events.forEach((e) => {
-      const key = dayKey(e.date)
-      if (!map.has(key)) map.set(key, [])
-      map.get(key).push(e)
-    })
-    return map
-  }, [events])
-
-  const year = cursor.getFullYear()
-  const month = cursor.getMonth()
-  const firstWeekday = new Date(year, month, 1).getDay()
-  const daysInMonth = new Date(year, month + 1, 0).getDate()
-  const monthLabel = cursor.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })
-  const todayKey = dayKey(new Date())
-
-  const cells = []
-  for (let i = 0; i < firstWeekday; i++) cells.push(null)
-  for (let d = 1; d <= daysInMonth; d++) cells.push(d)
-
-  const selectedEvents = selectedKey ? (eventsByDay.get(selectedKey) || []) : []
-
-  if (events.length === 0) {
-    return null // sem nenhum evento ainda — não vale poluir a tela com uma agenda vazia
+/** Data mostrada no card: apresentação marcada, se houver, senão a data de criação da proposta */
+function formatProposalDate(p) {
+  if (p.scheduledAt) {
+    const d = new Date(p.scheduledAt)
+    if (!isNaN(d)) return `Apresentação em ${d.toLocaleDateString('pt-BR')}`
   }
-
-  return (
-    <div className="bg-white border border-line rounded-2xl p-5 mb-10">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="font-medium text-ink capitalize">📅 Agenda — {monthLabel}</h3>
-        <div className="flex gap-1">
-          <button onClick={() => setCursor(new Date(year, month - 1, 1))} className="w-7 h-7 rounded-full border border-line hover:bg-sand text-sm">‹</button>
-          <button onClick={() => setCursor(new Date(year, month + 1, 1))} className="w-7 h-7 rounded-full border border-line hover:bg-sand text-sm">›</button>
-        </div>
-      </div>
-      <div className="grid grid-cols-7 gap-1 text-center text-[10px] text-muted uppercase mb-1">
-        {['D', 'S', 'T', 'Q', 'Q', 'S', 'S'].map((d, i) => <div key={i}>{d}</div>)}
-      </div>
-      <div className="grid grid-cols-7 gap-1">
-        {cells.map((d, i) => {
-          if (!d) return <div key={i} />
-          const key = `${year}-${month}-${d}`
-          const dayEvents = eventsByDay.get(key) || []
-          const isToday = key === todayKey
-          return (
-            <button
-              key={i}
-              onClick={() => dayEvents.length && setSelectedKey(key === selectedKey ? null : key)}
-              className={`aspect-square rounded-lg text-xs flex flex-col items-center justify-center gap-0.5 transition ${selectedKey === key ? 'bg-ink text-white' : isToday ? 'bg-sand font-semibold' : dayEvents.length ? 'hover:bg-sand' : ''}`}
-            >
-              <span>{d}</span>
-              {dayEvents.length > 0 && <span className={`w-1.5 h-1.5 rounded-full ${selectedKey === key ? 'bg-white' : 'bg-clay'}`} />}
-            </button>
-          )
-        })}
-      </div>
-
-      {selectedEvents.length > 0 && (
-        <div className="mt-4 pt-4 border-t border-line space-y-2">
-          {selectedEvents.map((e, i) => (
-            <button key={i} onClick={() => onOpen(e.proposalId)} className="w-full text-left text-sm px-3 py-2 rounded-lg border border-line hover:bg-sand flex items-center gap-2">
-              <span>{e.kind === 'apresentacao' ? '🗣️' : e.kind === 'inicio' ? '🚀' : '🏁'}</span>
-              <span className="flex-1">{e.label}</span>
-              <span className="text-xs text-muted">→</span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
-
-/** Converte "08/09/2026" (ou com hora) para Date; retorna null se não reconhecer o formato */
-function parseBrDate(s) {
-  if (!s) return null
-  const m = String(s).trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/)
-  if (!m) return null
-  const [, dd, mm, yyyy] = m
-  const year = yyyy.length === 2 ? `20${yyyy}` : yyyy
-  const d = new Date(Number(year), Number(mm) - 1, Number(dd))
-  return isNaN(d) ? null : d
-}
-
-function dayKey(date) {
-  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`
+  const created = p.createdAt?.toDate ? p.createdAt.toDate() : (p.createdAt?.seconds ? new Date(p.createdAt.seconds * 1000) : null)
+  if (created) return `Criada em ${created.toLocaleDateString('pt-BR')}`
+  return ''
 }
 
 function AcceptValueForm({ defaultValue, onConfirm }) {

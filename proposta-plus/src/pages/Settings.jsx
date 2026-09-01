@@ -4,7 +4,6 @@ import { DEFAULT_SHARED_TEXT, DEFAULT_IMAGES, TIPOLOGIAS } from '../lib/content'
 
 const TABS = [
   { id: 'empresa', label: 'Empresa' },
-  { id: 'textos', label: 'Textos padrão' },
   { id: 'fotos', label: 'Fotos por tipologia' },
 ]
 
@@ -100,121 +99,8 @@ export default function Settings() {
           <div className="text-sm text-muted bg-sand border border-line rounded-lg p-3">
             O texto de apresentação pessoal (bio, cidades de atuação, missão) agora é editado direto no slide "Sobre mim" da apresentação — clique em <strong>✎ Editar slide</strong> lá. Isso evita ter dois lugares diferentes controlando o mesmo texto.
           </div>
-        </div>
-      )}
-
-      {tab === 'textos' && (
-        <div className="max-w-2xl space-y-8">
-          <p className="text-sm text-muted">Estes textos aparecem em todas as propostas, nos três tipos de projeto. Mudou aqui, muda em todas.</p>
-
-          <TextBlock label="Frase de encerramento" value={content.shared.closingQuote} onChange={(v) => persistContent({ shared: { ...content.shared, closingQuote: v } })} />
-          <TextBlock label="Autor(a) da frase" value={content.shared.closingAuthor} onChange={(v) => persistContent({ shared: { ...content.shared, closingAuthor: v } })} />
-          <TextBlock label="Título de encerramento" value={content.shared.closingHeadline} onChange={(v) => persistContent({ shared: { ...content.shared, closingHeadline: v } })} />
-
-          <div>
-            <label className="text-sm font-medium text-ink block mb-1">Sobre mim (bio, cidades e missão — use linhas em branco para separar parágrafos)</label>
-            <textarea
-              value={content.shared.aboutBody || ''}
-              onChange={(e) => persistContent({ shared: { ...content.shared, aboutBody: e.target.value } })}
-              rows={6} className="w-full text-sm p-3 rounded-lg border border-line outline-none focus:border-clay font-mono"
-            />
-          </div>
-          <TextBlock label="Registro profissional (CAU, CREA…)" value={content.shared.aboutRegistration} onChange={(v) => persistContent({ shared: { ...content.shared, aboutRegistration: v } })} />
-
-          <ListBlock
-            label="O que será apresentado (agenda)"
-            items={content.shared.agenda}
-            onChange={(items) => persistContent({ shared: { ...content.shared, agenda: items } })}
-          />
-
-          <ListBlock
-            label="Etapas da jornada do cliente"
-            items={content.shared.journey}
-            onChange={(items) => persistContent({ shared: { ...content.shared, journey: items } })}
-          />
-
-          <div>
-            <label className="text-sm font-medium text-ink block mb-2">Motivos pelos quais um projeto faz diferença</label>
-            <div className="space-y-3">
-              {content.shared.reasons.map((r, i) => (
-                <div key={i} className="border border-line rounded-lg p-3">
-                  <input
-                    value={r.title}
-                    onChange={(e) => {
-                      const reasons = [...content.shared.reasons]
-                      reasons[i] = { ...reasons[i], title: e.target.value }
-                      persistContent({ shared: { ...content.shared, reasons } })
-                    }}
-                    className="text-sm font-medium w-full outline-none mb-1"
-                  />
-                  <textarea
-                    value={r.body}
-                    onChange={(e) => {
-                      const reasons = [...content.shared.reasons]
-                      reasons[i] = { ...reasons[i], body: e.target.value }
-                      persistContent({ shared: { ...content.shared, reasons } })
-                    }}
-                    rows={2} className="text-sm w-full outline-none text-ink/70"
-                  />
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <label className="text-sm font-medium text-ink block mb-2">Feedback's de clientes (com foto)</label>
-            <div className="space-y-3">
-              {content.shared.feedbacks.map((fb, i) => (
-                <div key={i} className="border border-line rounded-lg p-3 flex gap-3">
-                  <label className="cursor-pointer shrink-0">
-                    <img src={fb.photoUrl} alt="" className="w-12 h-12 rounded-full object-cover" />
-                    <input
-                      type="file" accept="image/*" hidden
-                      onChange={(e) => {
-                        const file = e.target.files[0]
-                        if (!file) return
-                        const reader = new FileReader()
-                        reader.onload = () => {
-                          const feedbacks = [...content.shared.feedbacks]
-                          feedbacks[i] = { ...feedbacks[i], photoUrl: reader.result }
-                          persistContent({ shared: { ...content.shared, feedbacks } })
-                        }
-                        reader.readAsDataURL(file)
-                      }}
-                    />
-                  </label>
-                  <div className="flex-1">
-                    <input
-                      value={fb.name}
-                      onChange={(e) => {
-                        const feedbacks = [...content.shared.feedbacks]
-                        feedbacks[i] = { ...feedbacks[i], name: e.target.value }
-                        persistContent({ shared: { ...content.shared, feedbacks } })
-                      }}
-                      className="text-sm font-medium w-full outline-none mb-1"
-                      placeholder="@usuario"
-                    />
-                    <textarea
-                      value={fb.text}
-                      onChange={(e) => {
-                        const feedbacks = [...content.shared.feedbacks]
-                        feedbacks[i] = { ...feedbacks[i], text: e.target.value }
-                        persistContent({ shared: { ...content.shared, feedbacks } })
-                      }}
-                      rows={2} className="text-sm w-full outline-none text-ink/70"
-                    />
-                  </div>
-                  <button
-                    onClick={() => persistContent({ shared: { ...content.shared, feedbacks: content.shared.feedbacks.filter((_, idx) => idx !== i) } })}
-                    className="text-xs text-red-600 self-start"
-                  >remover</button>
-                </div>
-              ))}
-            </div>
-            <button
-              onClick={() => persistContent({ shared: { ...content.shared, feedbacks: [...content.shared.feedbacks, { name: '@cliente', photoUrl: 'https://picsum.photos/seed/new/200/200', text: '' }] } })}
-              className="text-xs text-clay mt-2"
-            >+ adicionar feedback</button>
+          <div className="text-sm text-muted bg-sand border border-line rounded-lg p-3">
+            Os demais textos padrão (agenda, motivos, jornada do cliente, apresentações de projeto, feedbacks, encerramento) agora são editados direto em cada slide da apresentação. Abra qualquer proposta → Apresentar → clique em <strong>✎ Editar slide</strong> → escolha "Todas as propostas" para que a mudança valha em todo o sistema.
           </div>
         </div>
       )}

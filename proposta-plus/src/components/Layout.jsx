@@ -5,6 +5,7 @@ import { signOutUser } from '../lib/db'
 const NAV = [
   { to: '/', label: 'Propostas', icon: '▤' },
   { to: '/configuracoes', label: 'Configurações', icon: '⚙' },
+  { to: '/agenda', label: 'Agenda', icon: '📅' },
 ]
 
 export default function Layout({ user, children }) {

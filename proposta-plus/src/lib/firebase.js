@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app'
 import { getAuth, GoogleAuthProvider } from 'firebase/auth'
-import { getFirestore } from 'firebase/firestore'
+import { initializeFirestore } from 'firebase/firestore'
 import { getStorage } from 'firebase/storage'
 
 // Chaves do projeto Firebase "proposta-575f3".
@@ -16,6 +16,8 @@ const firebaseConfig = {
 
 export const app = initializeApp(firebaseConfig)
 export const auth = getAuth(app)
-export const db = getFirestore(app)
+// ignoreUndefinedProperties: evita que um campo "undefined" (ex: acceptedValue ao marcar uma
+// proposta como recusada) quebre o salvamento silenciosamente — era a causa do botão "Recusada" não funcionar
+export const db = initializeFirestore(app, { ignoreUndefinedProperties: true })
 export const storage = getStorage(app)
 export const googleProvider = new GoogleAuthProvider()

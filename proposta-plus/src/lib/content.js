@@ -81,6 +81,7 @@ export const DEFAULT_SHARED_TEXT = {
   ],
   scopeTitle: 'O que é preciso ser projetado para que o seu sonho seja realizado?',
   scopeSubtitle: 'Conheça todas as partes essenciais do projeto',
+  journeySubtitle: 'Do primeiro contato até a chave na mão',
   journey: [
     'Levantamento de medidas',
     'Briefing e estudo do programa de necessidades',

@@ -1,4 +1,4 @@
-import { listItems, money, hasValue, PACKAGE_LIST } from './fields'
+import { listItems, money, hasValue, PACKAGE_LIST, mesesParaTextoApresentacao } from './fields'
 
 const SECTION_META = {
   plantasGerais: { label: 'Plantas Gerais', icon: 'blueprint' },
@@ -58,6 +58,7 @@ export function buildSlides({ fields, content, images, settings, custom = [], vi
     type: 'clientRequest',
     image: images.scope,
     title: 'Solicitação do cliente',
+    descricaoProjeto: f('descricaoProjeto'),
     rows: [
       ['CLIENTE', f('nomeCliente')],
       ['ENDEREÇO', f('enderecoImovel')],
@@ -102,7 +103,7 @@ export function buildSlides({ fields, content, images, settings, custom = [], vi
   }
 
   const etapas = listItems(f('etapasPrincipais'))
-  list.push({ id: 'journey', type: 'journeyFlow', title: 'Jornada do cliente', subtitle: 'Do primeiro contato até a chave na mão', items: etapas.length ? etapas : content.journey, stepImages: [] })
+  list.push({ id: 'journey', type: 'journeyFlow', title: 'Jornada do cliente', subtitle: content.journeySubtitle, items: etapas.length ? etapas : content.journey, stepImages: [] })
 
   list.push({
     id: 'stages',
@@ -141,7 +142,7 @@ export function buildSlides({ fields, content, images, settings, custom = [], vi
 
     const schedule = [
       hasValue(f(`${pkg.id}TotalHoras`)) && `${f(`${pkg.id}TotalHoras`)}h de trabalho`,
-      hasValue(f(`${pkg.id}PrazoMeses`)) && `${f(`${pkg.id}PrazoMeses`)} mês(es) de prazo`,
+      hasValue(f(`${pkg.id}PrazoMeses`)) && `${mesesParaTextoApresentacao(f(`${pkg.id}PrazoMeses`))} de prazo`,
       f(`${pkg.id}Inicio`) && f(`${pkg.id}Fim`) && `De ${f(`${pkg.id}Inicio`)} até ${f(`${pkg.id}Fim`)}`,
     ].filter(Boolean)
 

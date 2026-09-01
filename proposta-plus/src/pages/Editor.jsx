@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { getProposal, saveProposal, getSettings, addSavedSwatch, addSavedPalette, removeSavedPalette } from '../lib/db'
+import { toEmbedUrl, parseMoneyBR, money } from '../lib/fields'
 import DataTable from '../components/DataTable'
 import ColorWheelPicker from '../components/ColorWheelPicker'
 import { DEFAULT_PALETTE } from '../lib/templates'
@@ -46,37 +47,59 @@ export default function Editor() {
   if (!proposal) return <div className="p-10 text-muted">Carregando…</div>
 
   return (
-    <div className="max-w-5xl mx-auto p-6 md:p-10">
-      <div className="flex items-center justify-between mb-3 flex-wrap gap-3">
-        <div>
-          <button onClick={() => navigate('/')} className="text-xs text-muted hover:text-ink mb-1">← Voltar às propostas</button>
-          <input
-            value={proposal.name || ''}
-            onChange={(e) => persist({ name: e.target.value })}
-            className="font-display text-2xl md:text-3xl text-ink outline-none bg-transparent border-b border-transparent focus:border-line w-full max-w-md"
-          />
+    <div className="max-w-5xl mx-auto">
+      <div className="sticky top-0 z-10 px-6 md:px-10 pt-6 md:pt-8 pb-4 mb-6" style={{ background: '#EFE6D5', borderBottom: '1px solid #E4D9C3' }}>
+        <div className="flex items-center justify-between mb-3 flex-wrap gap-3">
+          <div>
+            <button onClick={() => navigate('/')} className="text-xs text-muted hover:text-ink mb-1">← Voltar às propostas</button>
+            <input
+              value={proposal.name || ''}
+              onChange={(e) => persist({ name: e.target.value })}
+              className="font-display text-2xl md:text-3xl text-ink outline-none bg-transparent border-b border-transparent focus:border-line w-full max-w-md"
+            />
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-muted">{saving ? 'Salvando…' : savedTick ? 'Salvo ✓' : ''}</span>
+            <button
+              onClick={() => navigate(`/proposta/${id}/apresentar`)}
+              className="bg-ink text-white text-sm font-medium px-5 py-2.5 rounded-full hover:opacity-90"
+            >Apresentar →</button>
+          </div>
         </div>
-        <div className="flex items-center gap-3">
-          <span className="text-xs text-muted">{saving ? 'Salvando…' : savedTick ? 'Salvo ✓' : ''}</span>
-          <button
-            onClick={() => navigate(`/proposta/${id}/apresentar`)}
-            className="bg-ink text-white text-sm font-medium px-5 py-2.5 rounded-full hover:opacity-90"
-          >Apresentar →</button>
+
+        <StatusRow proposal={proposal} onChange={persist} />
+
+        <div className="flex items-center gap-6 flex-wrap text-sm mt-3">
+          <div className="flex items-center gap-2">
+            <label className="text-muted">📅 Data/hora da apresentação:</label>
+            <input
+              type="datetime-local"
+              value={proposal.scheduledAt || ''}
+              onChange={(e) => persist({ scheduledAt: e.target.value })}
+              className="text-sm p-1.5 rounded-lg border border-line outline-none focus:border-clay bg-white"
+            />
+            {proposal.scheduledAt && (
+              <button onClick={() => persist({ scheduledAt: '' })} className="text-xs text-muted hover:text-red-600">remover</button>
+            )}
+          </div>
+          {proposal.status === 'aceita' && (
+            <div className="flex items-center gap-2">
+              <label className="text-muted">📅 Data/hora da contratação:</label>
+              <input
+                type="datetime-local"
+                value={proposal.contractedAt || ''}
+                onChange={(e) => persist({ contractedAt: e.target.value })}
+                className="text-sm p-1.5 rounded-lg border border-line outline-none focus:border-clay bg-white"
+              />
+              {proposal.contractedAt && (
+                <button onClick={() => persist({ contractedAt: '' })} className="text-xs text-muted hover:text-red-600">remover</button>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
-      <div className="flex items-center gap-2 mb-6 text-sm">
-        <label className="text-muted">📅 Data e horário da apresentação:</label>
-        <input
-          type="datetime-local"
-          value={proposal.scheduledAt || ''}
-          onChange={(e) => persist({ scheduledAt: e.target.value })}
-          className="text-sm p-1.5 rounded-lg border border-line outline-none focus:border-clay"
-        />
-        {proposal.scheduledAt && (
-          <button onClick={() => persist({ scheduledAt: '' })} className="text-xs text-muted hover:text-red-600">remover</button>
-        )}
-      </div>
+      <div className="px-6 md:px-10 pb-10">
 
       <div className="flex gap-1 mb-8 border-b border-line overflow-x-auto">
         {TABS.map((t) => (
@@ -91,6 +114,75 @@ export default function Editor() {
       {tab === 'design' && <DesignTab proposal={proposal} onChange={persist} />}
       {tab === 'precos' && <PricingVisibilityTab proposal={proposal} onChange={persist} />}
       {tab === 'slides' && <CustomSlidesTab proposal={proposal} onChange={persist} />}
+      </div>
+    </div>
+  )
+}
+
+function StatusRow({ proposal, onChange }) {
+  const status = proposal.status || 'rascunho'
+  const STATUS_OPTS = [
+    { id: 'rascunho', label: 'Rascunho', color: '#7C8288', bg: '#F1F1EF' },
+    { id: 'enviada', label: 'Enviada', color: '#2563EB', bg: '#EFF4FE' },
+    { id: 'aceita', label: 'Aceita', color: '#16803C', bg: '#EAF7EE' },
+    { id: 'recusada', label: 'Recusada', color: '#B42318', bg: '#FDEEEC' },
+  ]
+
+  function setStatus(next) {
+    if (next === 'aceita') {
+      onChange({ status: next, acceptedValue: proposal.acceptedValue ?? null })
+    } else {
+      onChange({ status: next, acceptedPackageId: null })
+    }
+  }
+
+  function choosePackage(pkg) {
+    const raw = proposal.fields?.[`pacote${pkg.id.charAt(0).toUpperCase()}${pkg.id.slice(1)}Valor`]
+    const value = parseMoneyBR(raw)
+    onChange({ acceptedPackageId: pkg.id, acceptedValue: value })
+  }
+
+  return (
+    <div>
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-xs text-muted mr-1">Status:</span>
+        {STATUS_OPTS.map((s) => (
+          <button
+            key={s.id}
+            onClick={() => setStatus(s.id)}
+            className="text-xs px-3 py-1.5 rounded-full transition"
+            style={status === s.id ? { color: s.color, background: s.bg, fontWeight: 600 } : { color: '#7C8288', background: 'transparent', border: '1px solid #E4DFD6' }}
+          >{s.label}</button>
+        ))}
+      </div>
+
+      {status === 'aceita' && (
+        <div className="mt-3 p-3 bg-white/70 border border-line rounded-lg max-w-lg">
+          <div className="text-xs text-muted mb-2">Qual pacote o cliente escolheu?</div>
+          <div className="flex gap-2 flex-wrap mb-3">
+            {PACKAGE_LIST.map((pkg) => (
+              <button
+                key={pkg.id}
+                onClick={() => choosePackage(pkg)}
+                className={`text-xs px-3 py-1.5 rounded-full border ${proposal.acceptedPackageId === pkg.id ? 'bg-ink text-white border-ink' : 'border-line text-ink/70 hover:bg-sand'}`}
+              >{pkg.label}</button>
+            ))}
+          </div>
+          {proposal.acceptedPackageId && (
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-muted">Valor fechado:</label>
+              <input
+                type="number" step="0.01"
+                value={proposal.acceptedValue ?? ''}
+                onChange={(e) => onChange({ acceptedValue: e.target.value === '' ? null : Number(e.target.value) })}
+                className="text-sm p-1.5 rounded-lg border border-line outline-none focus:border-clay w-40"
+              />
+              <span className="text-xs text-muted">{proposal.acceptedValue != null ? money(proposal.acceptedValue) : ''}</span>
+            </div>
+          )}
+          <p className="text-[11px] text-muted mt-2">Pode editar o valor se tiver dado algum desconto na negociação.</p>
+        </div>
+      )}
     </div>
   )
 }
@@ -280,6 +372,7 @@ function CustomSlidesTab({ proposal, onChange }) {
             <input
               value={s.embedUrl || ''}
               onChange={(e) => updateSlide(i, { embedUrl: e.target.value, image: e.target.value ? '' : s.image })}
+              onBlur={(e) => updateSlide(i, { embedUrl: toEmbedUrl(e.target.value) })}
               placeholder="ou link de incorporação de vídeo (https://www.youtube.com/embed/…)"
               className="w-full text-xs p-2 rounded-lg border border-line outline-none focus:border-clay"
             />
