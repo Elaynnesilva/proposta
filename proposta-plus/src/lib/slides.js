@@ -43,7 +43,9 @@ export function buildSlides({ fields, content, images, settings, custom = [], vi
     type: 'profile',
     image: settings.logoDataUrl ? null : images.intro,
     title: settings.professionalName || content.aboutTitle,
-    items: [settings.bio || content.aboutBody, settings.registration || content.aboutRegistration].filter(Boolean),
+    // usa sempre o texto completo do modelo (que já inclui a missão) — antes, uma bio curta em
+    // Configurações podia sobrescrever e "engolir" o parágrafo da missão sem a pessoa perceber
+    items: [content.aboutBody, settings.registration || content.aboutRegistration].filter(Boolean),
   })
 
   list.push({ id: 'div-1', type: 'divider', title: 'Do que se trata esta proposta' })
@@ -60,7 +62,7 @@ export function buildSlides({ fields, content, images, settings, custom = [], vi
       ['CLIENTE', f('nomeCliente')],
       ['ENDEREÇO', f('enderecoImovel')],
       ['TIPOLOGIA DO PROJETO', f('tipologiaProjeto')],
-      ['OBJETIVO', f('descricaoProjeto')],
+      ['DESCRIÇÃO DO PROJETO', f('descricaoProjeto')],
     ].filter(([, v]) => v),
     ambientes: [...ambientesMaior, ...ambientesMenor],
     quantAmbientes: f('quantAmbientes'),
@@ -74,7 +76,7 @@ export function buildSlides({ fields, content, images, settings, custom = [], vi
   Object.entries(SECTION_META).forEach(([code, meta]) => {
     const items = listItems(f(code))
     if (items.length === 0) return
-    list.push({ id: `scope-${code}`, type: 'scopeSection', icon: meta.icon, title: meta.label, image: images.scope, items })
+    list.push({ id: `scope-${code}`, type: 'scopeSection', title: meta.label, image: images.scope, images: [], imageLayout: 'row', items })
   })
 
   list.push({
@@ -82,12 +84,25 @@ export function buildSlides({ fields, content, images, settings, custom = [], vi
     type: 'modeling',
     image: images.modeling,
     image2: images.modeling2,
+    images: [],
+    imageLayout: 'row',
     title: 'Modelagem 3D',
     items: ['Imagens e vídeos realistas', 'Vistas internas e externas', 'Imagens de todos os ângulos'],
   })
 
+  if (hasValue(f('acompanhamentoObraMeses')) || hasValue(f('acompanhamentoObraDias'))) {
+    list.push({
+      id: 'obra', type: 'scopeSection', title: 'Acompanhamento de obra', image: images.scope, images: [], imageLayout: 'row',
+      description: f('acompanhamentoObraDescricao'),
+      items: [
+        hasValue(f('acompanhamentoObraMeses')) && `${f('acompanhamentoObraMeses')} meses de acompanhamento`,
+        hasValue(f('acompanhamentoObraDias')) && `${f('acompanhamentoObraDias')} dias de visita por mês`,
+      ].filter(Boolean),
+    })
+  }
+
   const etapas = listItems(f('etapasPrincipais'))
-  list.push({ id: 'journey', type: 'journeyFlow', title: 'Jornada do cliente', items: etapas.length ? etapas : content.journey })
+  list.push({ id: 'journey', type: 'journeyFlow', title: 'Jornada do cliente', subtitle: 'Do primeiro contato até a chave na mão', items: etapas.length ? etapas : content.journey, stepImages: [] })
 
   list.push({
     id: 'stages',
@@ -162,16 +177,6 @@ export function buildSlides({ fields, content, images, settings, custom = [], vi
       paymentCards,
     })
   })
-
-  if (hasValue(f('acompanhamentoObraMeses')) || hasValue(f('acompanhamentoObraDias'))) {
-    list.push({
-      id: 'obra', type: 'scopeSection', icon: 'tools', title: 'Acompanhamento de obra', image: images.scope,
-      items: [
-        hasValue(f('acompanhamentoObraMeses')) && `${f('acompanhamentoObraMeses')} meses de acompanhamento`,
-        hasValue(f('acompanhamentoObraDias')) && `${f('acompanhamentoObraDias')} dias de visita por mês`,
-      ].filter(Boolean),
-    })
-  }
 
   list.push({ id: 'video', type: 'video', title: 'Vídeo do projeto', videoUrl, embedUrl: videoEmbedUrl })
 

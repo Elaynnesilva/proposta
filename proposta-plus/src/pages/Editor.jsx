@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { getProposal, saveProposal } from '../lib/db'
+import { getProposal, saveProposal, getSettings, addSavedSwatch, addSavedPalette, removeSavedPalette } from '../lib/db'
 import DataTable from '../components/DataTable'
 import ColorWheelPicker from '../components/ColorWheelPicker'
 import { DEFAULT_PALETTE } from '../lib/templates'
@@ -12,7 +12,6 @@ const TABS = [
   { id: 'design', label: 'Design e cores' },
   { id: 'precos', label: 'Preços a mostrar' },
   { id: 'slides', label: 'Slides personalizados' },
-  { id: 'video', label: 'Vídeo do projeto' },
 ]
 
 const DEFAULT_VISIBILITY = {
@@ -48,7 +47,7 @@ export default function Editor() {
 
   return (
     <div className="max-w-5xl mx-auto p-6 md:p-10">
-      <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
+      <div className="flex items-center justify-between mb-3 flex-wrap gap-3">
         <div>
           <button onClick={() => navigate('/')} className="text-xs text-muted hover:text-ink mb-1">← Voltar às propostas</button>
           <input
@@ -66,6 +65,19 @@ export default function Editor() {
         </div>
       </div>
 
+      <div className="flex items-center gap-2 mb-6 text-sm">
+        <label className="text-muted">📅 Data e horário da apresentação:</label>
+        <input
+          type="datetime-local"
+          value={proposal.scheduledAt || ''}
+          onChange={(e) => persist({ scheduledAt: e.target.value })}
+          className="text-sm p-1.5 rounded-lg border border-line outline-none focus:border-clay"
+        />
+        {proposal.scheduledAt && (
+          <button onClick={() => persist({ scheduledAt: '' })} className="text-xs text-muted hover:text-red-600">remover</button>
+        )}
+      </div>
+
       <div className="flex gap-1 mb-8 border-b border-line overflow-x-auto">
         {TABS.map((t) => (
           <button
@@ -79,7 +91,6 @@ export default function Editor() {
       {tab === 'design' && <DesignTab proposal={proposal} onChange={persist} />}
       {tab === 'precos' && <PricingVisibilityTab proposal={proposal} onChange={persist} />}
       {tab === 'slides' && <CustomSlidesTab proposal={proposal} onChange={persist} />}
-      {tab === 'video' && <VideoTab proposal={proposal} onChange={persist} />}
     </div>
   )
 }
@@ -104,12 +115,43 @@ function DesignTab({ proposal, onChange }) {
       <section>
         <h3 className="font-medium text-ink mb-1">Paleta de cores</h3>
         <p className="text-sm text-muted mb-4">Escolha até 3 cores: destaque, base e fundo.</p>
-        <ColorWheelPicker
-          palette={proposal.palette || DEFAULT_PALETTE}
-          onChange={(palette) => onChange({ palette })}
-        />
+        <ColorPickerConnected proposal={proposal} onChange={onChange} />
       </section>
     </div>
+  )
+}
+
+function ColorPickerConnected({ proposal, onChange }) {
+  const [settings, setSettings] = useState(null)
+
+  useEffect(() => { getSettings().then(setSettings) }, [])
+
+  async function handleAddSwatch(hex) {
+    const next = await addSavedSwatch(hex)
+    setSettings(next)
+  }
+
+  async function handleSavePalette(name, palette) {
+    const next = await addSavedPalette(name, palette)
+    setSettings(next)
+  }
+
+  async function handleDeletePalette(paletteId) {
+    const next = await removeSavedPalette(paletteId)
+    setSettings(next)
+  }
+
+  return (
+    <ColorWheelPicker
+      palette={proposal.palette || DEFAULT_PALETTE}
+      onChange={(palette) => onChange({ palette })}
+      savedSwatches={settings?.savedSwatches || []}
+      onAddSwatch={handleAddSwatch}
+      savedPalettes={settings?.savedPalettes || []}
+      onSavePalette={handleSavePalette}
+      onApplyPalette={(palette) => onChange({ palette })}
+      onDeletePalette={handleDeletePalette}
+    />
   )
 }
 
@@ -177,7 +219,7 @@ function CustomSlidesTab({ proposal, onChange }) {
   const slides = proposal.customSlides || []
 
   function addSlide() {
-    onChange({ customSlides: [...slides, { title: 'Novo slide', items: [''], image: '', videoUrl: '' }] })
+    onChange({ customSlides: [...slides, { title: 'Novo slide', items: [''], image: '', embedUrl: '' }] })
   }
   function updateSlide(i, patch) {
     const next = slides.map((s, idx) => (idx === i ? { ...s, ...patch } : s))
@@ -188,21 +230,17 @@ function CustomSlidesTab({ proposal, onChange }) {
   }
   function handleImage(i, file) {
     const reader = new FileReader()
-    reader.onload = () => updateSlide(i, { image: reader.result, videoUrl: '' })
-    reader.readAsDataURL(file)
-  }
-  function handleVideo(i, file) {
-    const reader = new FileReader()
-    reader.onload = () => updateSlide(i, { videoUrl: reader.result, image: '' })
+    reader.onload = () => updateSlide(i, { image: reader.result, embedUrl: '' })
     reader.readAsDataURL(file)
   }
 
   return (
     <div className="max-w-2xl">
       <p className="text-sm text-muted mb-5">
-        Crie telas extras com o que quiser: título, textos (aparecem um a um ao clicar) e uma imagem ou vídeo.
+        Crie telas extras com o que quiser: título, textos (aparecem um a um ao clicar) e uma imagem ou vídeo (via
+        link de incorporação do YouTube/Vimeo — suba o vídeo como "não listado" e cole o link no formato .../embed/...).
         Elas entram na apresentação logo antes do encerramento. Você também pode editar slides direto na
-        tela de apresentação, clicando em "Editar slide".
+        tela de apresentação, clicando em "Editar slide" — inclusive o vídeo principal do projeto, que agora se edita por lá.
       </p>
       <div className="space-y-4">
         {slides.map((s, i) => (
@@ -232,52 +270,23 @@ function CustomSlidesTab({ proposal, onChange }) {
             ))}
             <button onClick={() => updateSlide(i, { items: [...(s.items || ['']), ''] })} className="text-xs text-clay mb-3">+ Adicionar outro texto</button>
 
-            <div className="flex gap-4 items-center text-xs">
-              <label className="cursor-pointer text-ink/70 hover:text-ink">
+            <div className="flex gap-3 items-center text-xs mb-2">
+              <label className="cursor-pointer text-ink/70 hover:text-ink shrink-0">
                 📷 Imagem
                 <input type="file" accept="image/*" hidden onChange={(e) => e.target.files[0] && handleImage(i, e.target.files[0])} />
               </label>
-              <label className="cursor-pointer text-ink/70 hover:text-ink">
-                🎬 Vídeo
-                <input type="file" accept="video/*" hidden onChange={(e) => e.target.files[0] && handleVideo(i, e.target.files[0])} />
-              </label>
-              {(s.image || s.videoUrl) && <span className="text-green-700">arquivo anexado ✓</span>}
+              {s.image && <span className="text-green-700">imagem anexada ✓</span>}
             </div>
+            <input
+              value={s.embedUrl || ''}
+              onChange={(e) => updateSlide(i, { embedUrl: e.target.value, image: e.target.value ? '' : s.image })}
+              placeholder="ou link de incorporação de vídeo (https://www.youtube.com/embed/…)"
+              className="w-full text-xs p-2 rounded-lg border border-line outline-none focus:border-clay"
+            />
           </div>
         ))}
       </div>
       <button onClick={addSlide} className="mt-4 text-sm font-medium text-white bg-ink px-4 py-2 rounded-full hover:opacity-90">+ Novo slide</button>
-    </div>
-  )
-}
-
-function VideoTab({ proposal, onChange }) {
-  function handleFile(file) {
-    const reader = new FileReader()
-    reader.onload = () => onChange({ videoUrl: reader.result, videoEmbedUrl: '' })
-    reader.readAsDataURL(file)
-  }
-
-  return (
-    <div className="max-w-xl space-y-5">
-      <p className="text-sm text-muted">
-        Adicione um vídeo do projeto — pode ser um arquivo enviado do computador ou um link de incorporação (YouTube/Vimeo, modo "embed").
-        Esse vídeo é diferente por tipologia (residencial/comercial/corporativo), já que cada tipo de projeto tem imagens próprias.
-      </p>
-      <div>
-        <label className="text-sm font-medium text-ink block mb-1">Enviar arquivo de vídeo</label>
-        <input type="file" accept="video/*" onChange={(e) => e.target.files[0] && handleFile(e.target.files[0])} className="text-sm" />
-        {proposal.videoUrl && <p className="text-xs text-green-700 mt-1">Vídeo anexado ✓</p>}
-      </div>
-      <div>
-        <label className="text-sm font-medium text-ink block mb-1">ou link de incorporação (embed)</label>
-        <input
-          placeholder="https://www.youtube.com/embed/..."
-          defaultValue={proposal.videoEmbedUrl}
-          onBlur={(e) => onChange({ videoEmbedUrl: e.target.value, videoUrl: e.target.value ? '' : proposal.videoUrl })}
-          className="w-full text-sm p-2.5 rounded-lg border border-line outline-none focus:border-clay"
-        />
-      </div>
     </div>
   )
 }

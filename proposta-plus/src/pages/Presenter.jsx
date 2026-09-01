@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { getProposal, getSettings, getTemplateContent, saveProposal, saveTemplateContent } from '../lib/db'
 import { buildSlides } from '../lib/slides'
 import { DEFAULT_IMAGES, DEFAULT_SHARED_TEXT } from '../lib/content'
-import { STYLE, paletteToCssVars, readableTextColor, DEFAULT_PALETTE } from '../lib/templates'
+import { STYLE, paletteToCssVars, readableTextColor, isLowContrast, DEFAULT_PALETTE, FIXED_SWATCHES } from '../lib/templates'
 
 const SLIDE_ICONS = {
   cover: '🏠', agenda: '📋', profile: '👩‍🎨', divider: '—', clientRequest: '🗂️',
@@ -18,6 +18,18 @@ const GLOBAL_EDITABLE_SLIDES = new Set(['agenda', 'about', 'reasons', 'stages', 
 
 const EXPORT_W = 1600
 const EXPORT_H = 900
+
+/** Nome do arquivo baixado: "Cliente - Proposta - dd-mm-aa" (usa o primeiro nome do cliente e a data de hoje) */
+function exportFileName(proposal) {
+  const nomeCompleto = proposal?.fields?.nomeCliente || proposal?.name || 'Cliente'
+  const primeiroNome = nomeCompleto.trim().split(/\s+/)[0]
+  const hoje = new Date()
+  const dd = String(hoje.getDate()).padStart(2, '0')
+  const mm = String(hoje.getMonth() + 1).padStart(2, '0')
+  const aa = String(hoje.getFullYear()).slice(-2)
+  const safe = primeiroNome.replace(/[^\w\-]/g, '')
+  return `${safe} - Proposta - ${dd}-${mm}-${aa}.pdf`
+}
 
 export default function Presenter() {
   const { id } = useParams()
@@ -45,14 +57,20 @@ export default function Presenter() {
     ? { ...DEFAULT_IMAGES[proposal.tipologia], ...(templateContent?.images?.[proposal.tipologia] || {}) }
     : null
 
+  // resolve o vídeo principal em cascata: só esta proposta -> este tipo de projeto -> todos os tipos
+  const tipologiaVideo = templateContent?.images?.[proposal?.tipologia] || {}
+  const sharedVideo = templateContent?.sharedVideo || {}
+  const resolvedVideoUrl = proposal?.videoUrl || tipologiaVideo.videoUrl || sharedVideo.videoUrl || ''
+  const resolvedEmbedUrl = proposal?.videoEmbedUrl || tipologiaVideo.videoEmbedUrl || sharedVideo.videoEmbedUrl || ''
+
   const baseSlides = useMemo(() => {
     if (!proposal || !settings) return []
     return buildSlides({
       fields: proposal.fields || {},
       content, images, settings,
       custom: proposal.customSlides || [],
-      videoUrl: proposal.videoUrl || '',
-      videoEmbedUrl: proposal.videoEmbedUrl || '',
+      videoUrl: resolvedVideoUrl,
+      videoEmbedUrl: resolvedEmbedUrl,
       visibility: proposal.visibility || {},
     })
   }, [proposal, settings, templateContent])
@@ -72,12 +90,17 @@ export default function Presenter() {
     return list
   }, [baseSlides, proposal?.slideOverrides, proposal?.slideOrder])
 
-  const slide = slides[index]
+  // páginas ocultadas pela pessoa ficam fora da apresentação e do PDF, mas continuam
+  // listadas (esmaecidas) na barra lateral, prontas para serem reativadas quando quiser
+  const hiddenIds = useMemo(() => new Set(proposal?.hiddenSlides || []), [proposal?.hiddenSlides])
+  const visibleSlides = useMemo(() => slides.filter((s) => !hiddenIds.has(s.id)), [slides, hiddenIds])
+
+  const slide = visibleSlides[index]
   const palette = proposal?.palette || DEFAULT_PALETTE
   const [c1, c2, c3] = palette
   const cssVars = paletteToCssVars(palette)
 
-  const goNext = useCallback(() => { setIndex((i) => Math.min(i + 1, slides.length - 1)); setRevealCount(1) }, [slides.length])
+  const goNext = useCallback(() => { setIndex((i) => Math.min(i + 1, visibleSlides.length - 1)); setRevealCount(1) }, [visibleSlides.length])
   const goPrev = useCallback(() => { setIndex((i) => Math.max(i - 1, 0)); setRevealCount(999) }, [])
   const itemsLength = getItemsLength(slide)
 
@@ -98,7 +121,12 @@ export default function Presenter() {
     return () => window.removeEventListener('keydown', onKey)
   })
 
-  function jumpTo(i) { setIndex(i); setRevealCount(999) }
+  function jumpToId(slideId) {
+    const idx = visibleSlides.findIndex((s) => s.id === slideId)
+    if (idx < 0) return
+    setIndex(idx)
+    setRevealCount(999)
+  }
 
   function reorder(fromIdx, toIdx) {
     const ids = slides.map((s) => s.id)
@@ -123,13 +151,42 @@ export default function Presenter() {
     await saveTemplateContent(nextContent)
   }
 
+  /** Salva o vídeo principal no nível certo: só esta proposta, este tipo de projeto, ou todos os tipos. */
+  async function saveVideoByScope(scope, patch) {
+    if (scope === 'proposal') {
+      saveOverridePerProposal('video', patch)
+      return
+    }
+    if (scope === 'tipologia') {
+      const nextImages = { ...(templateContent?.images || {}), [proposal.tipologia]: { ...(templateContent?.images?.[proposal.tipologia] || {}), ...patch } }
+      const nextContent = { ...(templateContent || {}), images: nextImages }
+      setTemplateContent(nextContent)
+      await saveTemplateContent(nextContent)
+      return
+    }
+    // 'allTypes'
+    const nextContent = { ...(templateContent || {}), sharedVideo: { ...(templateContent?.sharedVideo || {}), ...patch } }
+    setTemplateContent(nextContent)
+    await saveTemplateContent(nextContent)
+  }
+
+  function toggleHidden(slideId) {
+    const hidden = new Set(proposal.hiddenSlides || [])
+    hidden.has(slideId) ? hidden.delete(slideId) : hidden.add(slideId)
+    const next = { ...proposal, hiddenSlides: [...hidden] }
+    setProposal(next)
+    saveProposal(next)
+    // se a página atual acabou de ser ocultada, evita ficar preso numa posição inexistente
+    if (hidden.has(slideId)) setIndex((i) => Math.max(0, Math.min(i, visibleSlides.length - 2)))
+  }
+
   async function handleExportPdf() {
     setExporting(true)
     try {
       const { default: html2canvas } = await import('html2canvas')
       const { jsPDF } = await import('jspdf')
       let pdf = null
-      for (let i = 0; i < slides.length; i++) {
+      for (let i = 0; i < visibleSlides.length; i++) {
         setExportIndex(i)
         setExportProgress(i + 1)
         // dá um tempinho para a imagem daquele slide carregar antes de "fotografar"
@@ -141,7 +198,7 @@ export default function Presenter() {
         else pdf.addPage([EXPORT_W, EXPORT_H], 'landscape')
         pdf.addImage(img, 'JPEG', 0, 0, EXPORT_W, EXPORT_H)
       }
-      pdf.save(`${(proposal.name || 'proposta').replace(/[^\w\- ]/g, '')}.pdf`)
+      pdf.save(exportFileName(proposal))
     } catch (err) {
       alert('Não consegui gerar o PDF agora. Tente de novo em alguns segundos.')
       console.error(err)
@@ -158,12 +215,20 @@ export default function Presenter() {
     <div className="fixed inset-0 bg-ink text-white select-none" style={{ ...cssVars, fontFamily: STYLE.bodyFont }}>
       <div className="flex h-full">
         {sidebarOpen && (
-          <SlideSidebar slides={slides} index={index} onJump={jumpTo} onReorder={reorder} onClose={() => setSidebarOpen(false)} />
+          <SlideSidebar
+            slides={slides}
+            currentId={slide?.id}
+            hiddenIds={hiddenIds}
+            onJump={jumpToId}
+            onToggleHidden={toggleHidden}
+            onReorder={reorder}
+            onClose={() => setSidebarOpen(false)}
+          />
         )}
 
         <div className="relative flex-1 min-w-0">
           <div className="absolute inset-0 cursor-pointer" onClick={handleAdvance}>
-            <SlideView slide={slide} c1={c1} c2={c2} c3={c3} revealCount={revealCount} />
+            <SlideView slide={slide} c1={c1} c2={c2} c3={c3} revealCount={revealCount} settings={settings} />
           </div>
 
           <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-4 py-3 pointer-events-none gap-2">
@@ -176,14 +241,14 @@ export default function Presenter() {
             <div className="flex items-center gap-2 pointer-events-auto">
               <button onClick={(e) => { e.stopPropagation(); setEditing((v) => !v) }} className="text-xs bg-black/30 hover:bg-black/50 backdrop-blur px-3 py-1.5 rounded-full transition">{editing ? 'Fechar edição' : '✎ Editar slide'}</button>
               <button disabled={exporting} onClick={(e) => { e.stopPropagation(); handleExportPdf() }} className="text-xs bg-black/30 hover:bg-black/50 backdrop-blur px-3 py-1.5 rounded-full transition disabled:opacity-50">
-                {exporting ? `Gerando PDF… ${exportProgress}/${slides.length}` : '⇩ Baixar PDF'}
+                {exporting ? `Gerando PDF… ${exportProgress}/${visibleSlides.length}` : '⇩ Baixar PDF'}
               </button>
-              <div className="text-xs bg-black/30 backdrop-blur px-3 py-1.5 rounded-full">{index + 1} / {slides.length}</div>
+              <div className="text-xs bg-black/30 backdrop-blur px-3 py-1.5 rounded-full">{index + 1} / {visibleSlides.length}</div>
             </div>
           </div>
 
           <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-1.5 pointer-events-none">
-            {slides.map((s, i) => (
+            {visibleSlides.map((s, i) => (
               <div key={s.id} className="h-1.5 rounded-full transition-all" style={{ width: i === index ? 22 : 6, background: i === index ? c1 : 'rgba(255,255,255,0.35)' }} />
             ))}
           </div>
@@ -191,11 +256,14 @@ export default function Presenter() {
           <button onClick={(e) => { e.stopPropagation(); goPrev() }} className="absolute left-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/25 hover:bg-black/45 backdrop-blur flex items-center justify-center">‹</button>
           <button onClick={(e) => { e.stopPropagation(); handleAdvance() }} className="absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/25 hover:bg-black/45 backdrop-blur flex items-center justify-center">›</button>
 
-          {editing && (
+          {editing && slide && (
             <EditPanel
               slide={slide}
+              palette={palette}
+              proposal={proposal}
               allowGlobal={GLOBAL_EDITABLE_SLIDES.has(slide.id)}
               onSave={(patch, scope) => { scope === 'global' ? saveGlobalContent(slide.id, patch) : saveOverridePerProposal(slide.id, patch) }}
+              onSaveVideoScope={(scope, patch) => saveVideoByScope(scope, patch)}
               onClose={() => setEditing(false)}
             />
           )}
@@ -205,8 +273,8 @@ export default function Presenter() {
       {/* área invisível usada só para "fotografar" cada slide na hora de gerar o PDF */}
       <div style={{ position: 'fixed', left: -99999, top: 0, width: EXPORT_W, height: EXPORT_H, overflow: 'hidden' }}>
         <div ref={exportRef} style={{ width: EXPORT_W, height: EXPORT_H }}>
-          {exporting && slides[exportIndex] && (
-            <SlideView slide={slides[exportIndex]} c1={c1} c2={c2} c3={c3} revealCount={999} />
+          {exporting && visibleSlides[exportIndex] && (
+            <SlideView slide={visibleSlides[exportIndex]} c1={c1} c2={c2} c3={c3} revealCount={999} settings={settings} />
           )}
         </div>
       </div>
@@ -229,8 +297,11 @@ function mapPatchToSharedContent(slideId, patch, shared) {
     if (patch.title !== undefined) next.reasonsTitle = patch.title
   } else if (slideId === 'stages') {
     if (patch.title !== undefined) next.stagesTitle = patch.title
+    if (patch.stages !== undefined) next.stages = patch.stages
+    if (patch.footnote !== undefined) next.observations = patch.footnote
   } else if (slideId === 'feedbacks') {
     if (patch.title !== undefined) next.feedbacksTitle = patch.title
+    if (patch.items !== undefined) next.feedbacks = patch.items
   } else if (slideId === 'closing') {
     if (patch.title !== undefined) next.closingHeadline = patch.title
     if (patch.quote !== undefined) next.closingQuote = patch.quote
@@ -241,15 +312,32 @@ function mapPatchToSharedContent(slideId, patch, shared) {
 
 function getItemsLength(slide) {
   if (!slide) return 0
+  // capa e "sobre mim" agora mostram os textos juntos, sem precisar clicar —
+  // então um clique já avança pro próximo slide, sem etapas escondidas no meio
+  if (slide.type === 'cover' || slide.type === 'profile') return 0
+  // nestes dois, o texto aparece todo de uma vez — quem controla o clique agora são as imagens
+  if (slide.type === 'scopeSection' || slide.type === 'modeling') return effectiveImages(slide).length
+  // aqui os textos continuam clicáveis normalmente, mas os cards de valor entram como um passo extra, no final
+  if (slide.type === 'pricingCalc') return (slide.items?.length || 0) + ((slide.hourValue || slide.dayValue) ? 1 : 0)
+  // o valor + prazo do pacote é o 1º passo; os cards de pagamento vêm depois, um a um
+  if (slide.type === 'packagePricing') return (slide.paymentCards?.length || 0) + 1
   if (Array.isArray(slide.items)) return slide.items.length
   if (slide.type === 'stages') return slide.stages?.length || 0
-  if (slide.type === 'packagePricing') return slide.paymentCards?.length || 0
   return 0
 }
 
+/** Junta o(s) campo(s) de imagem antigos (image/image2) com o novo array "images",
+ *  para as propostas mais antigas continuarem funcionando sem precisar reeditar nada. */
+function effectiveImages(slide) {
+  if (slide.images && slide.images.length) return slide.images
+  return [slide.image, slide.image2].filter(Boolean).map((url) => ({ url }))
+}
+
+const RATIO_CSS = { '1:1': '1 / 1', '4:5': '4 / 5', '5:4': '5 / 4', '9:16': '9 / 16', '16:9': '16 / 9' }
+
 /* ---------------- BARRA LATERAL DE SLIDES ---------------- */
 
-function SlideSidebar({ slides, index, onJump, onReorder, onClose }) {
+function SlideSidebar({ slides, currentId, hiddenIds, onJump, onToggleHidden, onReorder, onClose }) {
   const dragFrom = useRef(null)
 
   return (
@@ -259,23 +347,55 @@ function SlideSidebar({ slides, index, onJump, onReorder, onClose }) {
         <button onClick={onClose} className="text-white/50 hover:text-white text-xs">ocultar ✕</button>
       </div>
       <div className="flex-1 overflow-y-auto py-2">
-        {slides.map((s, i) => (
-          <div
-            key={s.id}
-            draggable
-            onDragStart={() => (dragFrom.current = i)}
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={() => { if (dragFrom.current !== null && dragFrom.current !== i) onReorder(dragFrom.current, i); dragFrom.current = null }}
-            onClick={() => onJump(i)}
-            className={`mx-2 mb-1 px-2.5 py-2 rounded-lg cursor-pointer flex items-center gap-2 text-xs transition ${i === index ? 'bg-white/15 text-white' : 'text-white/60 hover:bg-white/5'}`}
-            title="Arraste para reordenar"
-          >
-            <span className="text-white/30 text-[10px] w-4 text-center">{i + 1}</span>
-            <span>{SLIDE_ICONS[s.type] || '•'}</span>
-            <span className="truncate flex-1">{s.title || slideFallbackLabel(s)}</span>
-          </div>
-        ))}
+        {slides.map((s, i) => {
+          const hidden = hiddenIds.has(s.id)
+          return (
+            <div
+              key={s.id}
+              draggable
+              onDragStart={() => (dragFrom.current = i)}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={() => { if (dragFrom.current !== null && dragFrom.current !== i) onReorder(dragFrom.current, i); dragFrom.current = null }}
+              className={`mx-2 mb-1 px-2.5 py-2 rounded-lg flex items-center gap-2 text-xs transition ${s.id === currentId ? 'bg-white/15 text-white' : hidden ? 'text-white/30' : 'text-white/60 hover:bg-white/5'}`}
+              title="Arraste para reordenar"
+            >
+              <span className="text-white/30 text-[10px] w-4 text-center shrink-0">{i + 1}</span>
+              <span
+                onClick={() => !hidden && onJump(s.id)}
+                className={`flex-1 flex items-center gap-2 min-w-0 ${hidden ? 'cursor-default' : 'cursor-pointer'}`}
+              >
+                <span>{SLIDE_ICONS[s.type] || '•'}</span>
+                <span className="truncate">{s.title || slideFallbackLabel(s)}</span>
+              </span>
+              <button
+                onClick={(e) => { e.stopPropagation(); onToggleHidden(s.id) }}
+                className="shrink-0 text-white/40 hover:text-white text-xs"
+                title={hidden ? 'Mostrar esta página' : 'Ocultar esta página'}
+              >{hidden ? '🚫' : '👁'}</button>
+            </div>
+          )
+        })}
       </div>
+    </div>
+  )
+}
+
+function ColorSwatchRow({ palette, value, onChange }) {
+  const options = [...palette, ...FIXED_SWATCHES.map((s) => s.hex)]
+  return (
+    <div className="flex gap-2 flex-wrap mb-1">
+      {options.map((hex, i) => (
+        <button
+          key={`${hex}-${i}`}
+          onClick={() => onChange(hex)}
+          title={hex}
+          className={`w-7 h-7 rounded-md border-2 transition ${value === hex ? 'border-clay' : 'border-line'}`}
+          style={{ background: hex }}
+        />
+      ))}
+      {value && (
+        <button onClick={() => onChange('')} className="text-[11px] text-muted hover:text-ink px-2" title="Voltar ao padrão">padrão</button>
+      )}
     </div>
   )
 }
@@ -289,19 +409,87 @@ function slideFallbackLabel(s) {
 
 /* ---------------- PAINEL DE EDIÇÃO RÁPIDA DO SLIDE ---------------- */
 
-function EditPanel({ slide, allowGlobal, onSave, onClose }) {
-  const [scope, setScope] = useState('proposal')
+function ImagePositionPicker({ image, onChange }) {
+  const boxRef = useRef(null)
+  const posX = image.posX ?? 50
+  const posY = image.posY ?? 50
+
+  function updateFromEvent(e) {
+    const rect = boxRef.current.getBoundingClientRect()
+    const x = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100))
+    const y = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100))
+    onChange({ posX: Math.round(x), posY: Math.round(y) })
+  }
+
+  function handlePointerDown(e) {
+    e.preventDefault()
+    updateFromEvent(e)
+    const onMove = (ev) => updateFromEvent(ev)
+    const onUp = () => { window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp) }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+
+  return (
+    <div
+      ref={boxRef}
+      onPointerDown={handlePointerDown}
+      className="relative w-full h-32 rounded-lg overflow-hidden cursor-crosshair border border-line select-none"
+      style={{ aspectRatio: RATIO_CSS[image.ratio] || undefined }}
+      title="Clique e arraste para escolher o enquadramento"
+    >
+      <img src={image.url} alt="" draggable={false} className="w-full h-full object-cover pointer-events-none" style={{ objectPosition: `${posX}% ${posY}%` }} />
+      <div className="absolute w-4 h-4 rounded-full border-2 border-white shadow pointer-events-none" style={{ left: `calc(${posX}% - 8px)`, top: `calc(${posY}% - 8px)`, background: '#B85C3E' }} />
+    </div>
+  )
+}
+
+function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALETTE, proposal, onSaveVideoScope }) {
+  // padrão é "todas as propostas" apenas quando essa opção existe pro tipo de slide (allowGlobal);
+  // do contrário, o escopo é sempre "só esta proposta" — bug crítico corrigido aqui: antes disso,
+  // slides sem a opção de escopo (título, imagens, vídeo…) tentavam salvar como "global" por engano
+  // e a edição se perdia silenciosamente, pois não existe conteúdo compartilhado pra esses tipos.
+  const [scope, setScope] = useState(allowGlobal ? 'global' : 'proposal')
   const [title, setTitle] = useState(slide.title || slide.headline || '')
   const [items, setItems] = useState(Array.isArray(slide.items) && typeof slide.items[0] !== 'object' ? [...slide.items] : null)
   const [quote, setQuote] = useState(slide.quote || '')
   const [author, setAuthor] = useState(slide.author || '')
+  const [subtitle, setSubtitle] = useState(slide.subtitle || '')
+  const [description, setDescription] = useState(slide.description || '')
+  const [bgColor, setBgColor] = useState(slide.bgColor || '')
+  const [textColor, setTextColor] = useState(slide.textColor || '')
+  const [stepImages, setStepImages] = useState(slide.stepImages || [])
+  const isStages = slide.type === 'stages'
+  const [stages, setStages] = useState(() => (slide.stages ? JSON.parse(JSON.stringify(slide.stages)) : []))
+  const [footnote, setFootnote] = useState(slide.footnote || '')
+  const isFeedbacks = slide.type === 'feedbacks'
+  const [feedbacks, setFeedbacks] = useState(() => (isFeedbacks && Array.isArray(slide.items) ? JSON.parse(JSON.stringify(slide.items)) : []))
+  const isMultiImage = slide.type === 'scopeSection' || slide.type === 'modeling'
+  const [images, setImages] = useState(() => effectiveImages(slide))
+  const [imageLayout, setImageLayout] = useState(slide.imageLayout || 'row')
+  const [adjustingIdx, setAdjustingIdx] = useState(null)
+  const isVideo = slide.type === 'video'
+  const [embedUrl, setEmbedUrl] = useState(slide.embedUrl || '')
+  const [videoScope, setVideoScope] = useState('proposal')
 
   useEffect(() => {
-    setScope('proposal')
+    setScope(allowGlobal ? 'global' : 'proposal')
     setTitle(slide.title || slide.headline || '')
     setItems(Array.isArray(slide.items) && typeof slide.items[0] !== 'object' ? [...slide.items] : null)
     setQuote(slide.quote || '')
     setAuthor(slide.author || '')
+    setSubtitle(slide.subtitle || '')
+    setDescription(slide.description || '')
+    setBgColor(slide.bgColor || '')
+    setTextColor(slide.textColor || '')
+    setStepImages(slide.stepImages || [])
+    setImages(effectiveImages(slide))
+    setImageLayout(slide.imageLayout || 'row')
+    setEmbedUrl(slide.embedUrl || '')
+    setAdjustingIdx(null)
+    setStages(slide.stages ? JSON.parse(JSON.stringify(slide.stages)) : [])
+    setFootnote(slide.footnote || '')
+    setFeedbacks(slide.type === 'feedbacks' && Array.isArray(slide.items) ? JSON.parse(JSON.stringify(slide.items)) : [])
   }, [slide.id])
 
   function handleImage(file) {
@@ -310,9 +498,28 @@ function EditPanel({ slide, allowGlobal, onSave, onClose }) {
     reader.readAsDataURL(file)
   }
 
+  function addImages(fileList) {
+    const files = Array.from(fileList || [])
+    files.forEach((file) => {
+      const reader = new FileReader()
+      reader.onload = () => setImages((prev) => [...prev, { url: reader.result, ratio: '' }])
+      reader.readAsDataURL(file)
+    })
+  }
+
   function save() {
     const patch = slide.type === 'closing' ? { title, quote, author } : { title }
     if (items) patch.items = items
+    if (slide.type === 'divider') { patch.subtitle = subtitle; patch.bgColor = bgColor; patch.textColor = textColor }
+    if (slide.type === 'journeyFlow') { patch.subtitle = subtitle; patch.stepImages = stepImages }
+    if (isMultiImage) { patch.images = images; patch.imageLayout = imageLayout; patch.image = null; patch.image2 = null; patch.description = description }
+    if (isStages) { patch.stages = stages; patch.footnote = footnote }
+    if (isFeedbacks) { patch.items = feedbacks }
+    if (isVideo) {
+      onSaveVideoScope?.(videoScope, { videoUrl: '', videoPath: '', embedUrl })
+      onClose()
+      return
+    }
     onSave(patch, scope)
     onClose()
   }
@@ -343,6 +550,27 @@ function EditPanel({ slide, allowGlobal, onSave, onClose }) {
       <label className="text-xs font-medium text-ink/70 block mb-1">Título</label>
       <input value={title} onChange={(e) => setTitle(e.target.value)} className="w-full text-sm p-2.5 rounded-lg border border-line outline-none focus:border-clay mb-4" />
 
+      {slide.type === 'divider' && (
+        <>
+          <label className="text-xs font-medium text-ink/70 block mb-1">Subtítulo (opcional)</label>
+          <textarea value={subtitle} onChange={(e) => setSubtitle(e.target.value)} rows={2} className="w-full text-sm p-2.5 rounded-lg border border-line outline-none focus:border-clay mb-4" placeholder="Uma linha de apoio abaixo do título…" />
+
+          <label className="text-xs font-medium text-ink/70 block mb-1">Cor do fundo</label>
+          <ColorSwatchRow palette={palette} value={bgColor} onChange={setBgColor} />
+
+          <label className="text-xs font-medium text-ink/70 block mb-1 mt-3">Cor do texto</label>
+          <ColorSwatchRow palette={palette} value={textColor} onChange={setTextColor} />
+          <p className="text-[11px] text-muted mb-4 mt-1">Se a combinação escolhida ficar difícil de ler, o sistema ajusta automaticamente para garantir contraste.</p>
+        </>
+      )}
+
+      {slide.type === 'journeyFlow' && (
+        <>
+          <label className="text-xs font-medium text-ink/70 block mb-1">Subtítulo</label>
+          <input value={subtitle} onChange={(e) => setSubtitle(e.target.value)} className="w-full text-sm p-2.5 rounded-lg border border-line outline-none focus:border-clay mb-4" />
+        </>
+      )}
+
       {slide.type === 'closing' && (
         <>
           <label className="text-xs font-medium text-ink/70 block mb-1">Frase</label>
@@ -352,15 +580,52 @@ function EditPanel({ slide, allowGlobal, onSave, onClose }) {
         </>
       )}
 
+      {isVideo && (
+        <div className="mb-4">
+          <div className="mb-3 border border-line rounded-lg p-3 bg-sand">
+            <div className="text-xs font-medium text-ink mb-2">Este vídeo vale para:</div>
+            <label className="flex items-center gap-2 text-sm mb-1.5 cursor-pointer">
+              <input type="radio" checked={videoScope === 'proposal'} onChange={() => setVideoScope('proposal')} />
+              Só esta proposta
+            </label>
+            <label className="flex items-center gap-2 text-sm mb-1.5 cursor-pointer">
+              <input type="radio" checked={videoScope === 'tipologia'} onChange={() => setVideoScope('tipologia')} />
+              Este tipo de projeto ({proposal?.tipologia}), em todos os clientes
+            </label>
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <input type="radio" checked={videoScope === 'allTypes'} onChange={() => setVideoScope('allTypes')} />
+              Todos os tipos de projeto
+            </label>
+          </div>
+
+          <label className="text-xs font-medium text-ink/70 block mb-1">Link de incorporação (YouTube/Vimeo, modo "embed")</label>
+          <p className="text-[11px] text-muted mb-2">Suba o vídeo como "não listado" no YouTube e cole aqui o link no formato .../embed/...</p>
+          <input
+            value={embedUrl}
+            onChange={(e) => setEmbedUrl(e.target.value)}
+            placeholder="https://www.youtube.com/embed/…"
+            className="w-full text-sm p-2.5 rounded-lg border border-line outline-none focus:border-clay"
+          />
+        </div>
+      )}
+
       {items && (
         <div className="mb-4">
-          <label className="text-xs font-medium text-ink/70 block mb-1">Textos (aparecem um a um ao clicar)</label>
+          <label className="text-xs font-medium text-ink/70 block mb-1">
+            {slide.type === 'cover' || slide.type === 'profile' ? 'Textos (aparecem juntos, assim que o slide abre)' : 'Textos (aparecem um a um ao clicar)'}
+          </label>
           {items.map((it, i) => (
-            <textarea
-              key={i} value={it} rows={2}
-              onChange={(e) => { const next = [...items]; next[i] = e.target.value; setItems(next) }}
-              className="w-full text-sm p-2 rounded-lg border border-line outline-none focus:border-clay mb-2"
-            />
+            <div key={i} className="flex gap-1.5 items-start mb-2">
+              <textarea
+                value={it} rows={2}
+                onChange={(e) => { const next = [...items]; next[i] = e.target.value; setItems(next) }}
+                className="w-full text-sm p-2 rounded-lg border border-line outline-none focus:border-clay"
+              />
+              <div className="flex flex-col gap-1 shrink-0">
+                <button disabled={i === 0} onClick={() => { const next = [...items];[next[i - 1], next[i]] = [next[i], next[i - 1]]; setItems(next) }} className="w-6 h-6 text-xs rounded border border-line disabled:opacity-30 hover:bg-sand" title="Mover para cima">↑</button>
+                <button disabled={i === items.length - 1} onClick={() => { const next = [...items];[next[i + 1], next[i]] = [next[i], next[i + 1]]; setItems(next) }} className="w-6 h-6 text-xs rounded border border-line disabled:opacity-30 hover:bg-sand" title="Mover para baixo">↓</button>
+              </div>
+            </div>
           ))}
           <div className="flex gap-3">
             <button onClick={() => setItems([...items, ''])} className="text-xs text-clay">+ adicionar texto</button>
@@ -369,7 +634,192 @@ function EditPanel({ slide, allowGlobal, onSave, onClose }) {
         </div>
       )}
 
-      {'image' in slide && (
+      {isStages && (
+        <div className="mb-4">
+          <label className="text-xs font-medium text-ink/70 block mb-1">Apresentações</label>
+          {stages.map((s, i) => (
+            <div key={i} className="border border-line rounded-lg p-3 mb-3">
+              <div className="flex items-center gap-2 mb-2">
+                <input
+                  value={s.title}
+                  onChange={(e) => setStages((prev) => prev.map((p, k) => k === i ? { ...p, title: e.target.value } : p))}
+                  className="flex-1 text-sm font-medium p-1.5 rounded border border-line outline-none focus:border-clay"
+                  placeholder="Título da apresentação"
+                />
+                <button onClick={() => setStages((prev) => prev.filter((_, k) => k !== i))} className="text-xs text-red-600 shrink-0">remover</button>
+              </div>
+              {(s.items || []).map((it, k) => (
+                <div key={k} className="flex gap-1 mb-1.5">
+                  <input
+                    value={it}
+                    onChange={(e) => setStages((prev) => prev.map((p, pi) => pi === i ? { ...p, items: p.items.map((x, xi) => xi === k ? e.target.value : x) } : p))}
+                    className="flex-1 text-xs p-1.5 rounded border border-line outline-none focus:border-clay"
+                  />
+                  <button onClick={() => setStages((prev) => prev.map((p, pi) => pi === i ? { ...p, items: p.items.filter((_, xi) => xi !== k) } : p))} className="text-xs text-red-600">✕</button>
+                </div>
+              ))}
+              <button onClick={() => setStages((prev) => prev.map((p, pi) => pi === i ? { ...p, items: [...(p.items || []), ''] } : p))} className="text-[11px] text-clay">+ item</button>
+
+              <div className="mt-2 flex items-center gap-2">
+                {s.image && <img src={s.image} className="w-10 h-10 object-cover rounded" alt="" />}
+                <label className="text-[11px] cursor-pointer text-clay">
+                  {s.image ? 'Trocar imagem' : '+ adicionar imagem'}
+                  <input type="file" accept="image/*" hidden onChange={(e) => {
+                    const file = e.target.files[0]; if (!file) return
+                    const reader = new FileReader()
+                    reader.onload = () => setStages((prev) => prev.map((p, pi) => pi === i ? { ...p, image: reader.result } : p))
+                    reader.readAsDataURL(file)
+                  }} />
+                </label>
+              </div>
+            </div>
+          ))}
+          <button onClick={() => setStages((prev) => [...prev, { title: 'Nova apresentação', items: [''] }])} className="text-xs text-clay mb-4">+ adicionar apresentação</button>
+
+          <label className="text-xs font-medium text-ink/70 block mb-1">Observação (embaixo dos cards)</label>
+          <textarea value={footnote} onChange={(e) => setFootnote(e.target.value)} rows={2} className="w-full text-sm p-2.5 rounded-lg border border-line outline-none focus:border-clay mb-4" />
+        </div>
+      )}
+
+      {isFeedbacks && (
+        <div className="mb-4">
+          <label className="text-xs font-medium text-ink/70 block mb-1">Feedbacks de clientes</label>
+          {feedbacks.map((fb, i) => (
+            <div key={i} className="border border-line rounded-lg p-3 mb-3">
+              <div className="flex items-center gap-2 mb-2">
+                <input
+                  value={fb.name || ''}
+                  onChange={(e) => setFeedbacks((prev) => prev.map((p, k) => k === i ? { ...p, name: e.target.value } : p))}
+                  className="flex-1 text-sm font-medium p-1.5 rounded border border-line outline-none focus:border-clay"
+                  placeholder="Nome do cliente (ex: @usuario)"
+                />
+                <button onClick={() => setFeedbacks((prev) => prev.filter((_, k) => k !== i))} className="text-xs text-red-600 shrink-0">remover</button>
+              </div>
+              <textarea
+                value={fb.text || ''} rows={2}
+                onChange={(e) => setFeedbacks((prev) => prev.map((p, k) => k === i ? { ...p, text: e.target.value } : p))}
+                placeholder="Texto do feedback"
+                className="w-full text-xs p-2 rounded border border-line outline-none focus:border-clay mb-2"
+              />
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="flex items-center gap-2">
+                  {fb.photoUrl && <img src={fb.photoUrl} className="w-8 h-8 object-cover rounded-full" alt="" />}
+                  <label className="text-[11px] cursor-pointer text-clay">
+                    foto do cliente
+                    <input type="file" accept="image/*" hidden onChange={(e) => {
+                      const file = e.target.files[0]; if (!file) return
+                      const reader = new FileReader()
+                      reader.onload = () => setFeedbacks((prev) => prev.map((p, k) => k === i ? { ...p, photoUrl: reader.result } : p))
+                      reader.readAsDataURL(file)
+                    }} />
+                  </label>
+                </div>
+                <div className="flex items-center gap-2">
+                  {fb.printUrl && <img src={fb.printUrl} className="w-8 h-8 object-cover rounded" alt="" />}
+                  <label className="text-[11px] cursor-pointer text-clay">
+                    {fb.printUrl ? 'trocar print' : 'usar print em vez do texto'}
+                    <input type="file" accept="image/*" hidden onChange={(e) => {
+                      const file = e.target.files[0]; if (!file) return
+                      const reader = new FileReader()
+                      reader.onload = () => setFeedbacks((prev) => prev.map((p, k) => k === i ? { ...p, printUrl: reader.result } : p))
+                      reader.readAsDataURL(file)
+                    }} />
+                  </label>
+                  {fb.printUrl && <button onClick={() => setFeedbacks((prev) => prev.map((p, k) => k === i ? { ...p, printUrl: '' } : p))} className="text-[11px] text-red-600">remover print</button>}
+                </div>
+              </div>
+            </div>
+          ))}
+          <button onClick={() => setFeedbacks((prev) => [...prev, { name: '', text: '' }])} className="text-xs text-clay">+ adicionar feedback</button>
+        </div>
+      )}
+
+      {slide.type === 'journeyFlow' && items && (
+        <div className="mb-4">
+          <label className="text-xs font-medium text-ink/70 block mb-1">Imagem de cada etapa (opcional)</label>
+          {items.map((it, i) => (
+            <div key={i} className="flex items-center gap-2 border border-line rounded-lg p-2 mb-2">
+              <span className="text-xs text-muted w-5 text-center shrink-0">{i + 1}</span>
+              {stepImages[i] && <img src={stepImages[i]} className="w-10 h-10 object-cover rounded" alt="" />}
+              <label className="text-xs cursor-pointer text-clay flex-1">
+                {stepImages[i] ? 'Trocar imagem' : '+ adicionar imagem'}
+                <input
+                  type="file" accept="image/*" hidden
+                  onChange={(e) => {
+                    const file = e.target.files[0]; if (!file) return
+                    const reader = new FileReader()
+                    reader.onload = () => setStepImages((prev) => { const next = [...prev]; next[i] = reader.result; return next })
+                    reader.readAsDataURL(file)
+                  }}
+                />
+              </label>
+              {stepImages[i] && <button onClick={() => setStepImages((prev) => { const next = [...prev]; next[i] = ''; return next })} className="text-xs text-red-600">remover</button>}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {slide.type === 'scopeSection' && (
+        <>
+          <label className="text-xs font-medium text-ink/70 block mb-1">Descrição (parágrafo abaixo do título — os textos abaixo continuam virando tópicos com marcador)</label>
+          <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} className="w-full text-sm p-2.5 rounded-lg border border-line outline-none focus:border-clay mb-4" />
+        </>
+      )}
+
+      {isMultiImage ? (
+        <div className="mb-4">
+          <label className="text-xs font-medium text-ink/70 block mb-1">Imagens (só desta proposta)</label>
+
+          {images.length === 0 ? (
+            <p className="text-xs text-muted mb-2">Nenhuma imagem — o texto vai ocupar o espaço todo, de um jeito mais legível.</p>
+          ) : (
+            <>
+              <div className="text-xs font-medium text-ink/70 block mb-1 mt-3">Organização das imagens</div>
+              <div className="flex gap-2 mb-3">
+                <button onClick={() => setImageLayout('row')} className={`text-xs px-3 py-1.5 rounded-full border ${imageLayout === 'row' ? 'bg-ink text-white border-ink' : 'border-line text-ink/70'}`}>Lado a lado</button>
+                <button onClick={() => setImageLayout('grid')} className={`text-xs px-3 py-1.5 rounded-full border ${imageLayout === 'grid' ? 'bg-ink text-white border-ink' : 'border-line text-ink/70'}`}>Grade</button>
+              </div>
+              <div className="space-y-2 mb-3">
+                {images.map((img, i) => (
+                  <div key={i} className="border border-line rounded-lg p-2">
+                    <div className="flex items-center gap-2">
+                      <img src={img.url} className="w-14 h-14 object-cover rounded" alt="" style={{ objectPosition: `${img.posX ?? 50}% ${img.posY ?? 50}%` }} />
+                      <select
+                        value={img.ratio || ''}
+                        onChange={(e) => setImages((prev) => prev.map((p, k) => k === i ? { ...p, ratio: e.target.value } : p))}
+                        className="text-xs border border-line rounded px-2 py-1.5 flex-1"
+                      >
+                        <option value="">Formato original</option>
+                        <option value="1:1">1:1 — quadrado</option>
+                        <option value="4:5">4:5 — retrato</option>
+                        <option value="5:4">5:4 — paisagem</option>
+                        <option value="9:16">9:16 — vertical</option>
+                        <option value="16:9">16:9 — widescreen</option>
+                      </select>
+                      <button onClick={() => setAdjustingIdx(adjustingIdx === i ? null : i)} className="text-xs text-clay px-1 shrink-0">{adjustingIdx === i ? 'fechar' : 'ajustar'}</button>
+                      <button onClick={() => setImages((prev) => prev.filter((_, k) => k !== i))} className="text-xs text-red-600 px-1 shrink-0">remover</button>
+                    </div>
+                    {adjustingIdx === i && (
+                      <div className="mt-2">
+                        <p className="text-[11px] text-muted mb-1">Arraste dentro da imagem para escolher o enquadramento</p>
+                        <ImagePositionPicker image={img} onChange={(patch) => setImages((prev) => prev.map((p, k) => k === i ? { ...p, ...patch } : p))} />
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+
+          <label className="text-xs cursor-pointer text-clay font-medium">
+            + adicionar imagem(ns)
+            <input type="file" accept="image/*" multiple hidden onChange={(e) => { addImages(e.target.files); e.target.value = '' }} />
+          </label>
+          {images.length > 0 && (
+            <button onClick={() => setImages([])} className="block text-xs text-muted hover:text-red-600 mt-2">remover todas (sem imagem)</button>
+          )}
+        </div>
+      ) : 'image' in slide && (
         <div className="mb-4">
           <label className="text-xs font-medium text-ink/70 block mb-1">Imagem (só desta proposta)</label>
           {slide.image && <img src={slide.image} className="w-full h-28 object-cover rounded-lg mb-2" alt="" />}
@@ -398,8 +848,11 @@ function SlideImage({ src, className, style }) {
 
 const titleStyle = { fontFamily: STYLE.displayFont, fontWeight: STYLE.headingWeight, textTransform: STYLE.headingTransform, letterSpacing: STYLE.headingTracking }
 
-function SlideView({ slide, c1, c2, c3, revealCount }) {
+function SlideView({ slide, c1, c2, c3, revealCount, settings }) {
   const t2 = readableTextColor(c2)
+  // se a cor de destaque (c1) não tiver contraste suficiente sobre o fundo (c2),
+  // usamos automaticamente a cor de texto legível no lugar — nunca mais texto "sumindo"
+  const c1OnC2 = isLowContrast(c1, c2) ? t2 : c1
   const radius = STYLE.radius
 
   switch (slide.type) {
@@ -408,23 +861,31 @@ function SlideView({ slide, c1, c2, c3, revealCount }) {
         <div className="w-full h-full relative flex items-end">
           <SlideImage src={slide.image} className="absolute inset-0 w-full h-full" />
           <div className="absolute inset-0" style={{ background: 'linear-gradient(0deg, rgba(0,0,0,0.8) 10%, rgba(0,0,0,0.15) 60%, rgba(0,0,0,0.4) 100%)' }} />
+          {settings?.logoDataUrl && (
+            <img src={settings.logoDataUrl} alt="logo" className="absolute z-10 top-6 left-6 md:top-10 md:left-10 h-12 md:h-16 object-contain" />
+          )}
           <div className="relative z-10 p-10 md:p-20 max-w-3xl">
             <div className="text-xs tracking-[0.2em] uppercase mb-4" style={{ color: c1 }}>{slide.kicker}</div>
             <h1 className="text-3xl md:text-5xl mb-6 text-white" style={titleStyle}>{slide.title}</h1>
+            {/* sem animação na capa, a pedido — o texto aparece pronto, junto com o slide */}
             {slide.items.map((it, i) => (
-              <Reveal key={i} i={i} revealCount={revealCount} className="text-base md:text-lg text-white/85 mb-2 max-w-xl">{it}</Reveal>
+              <p key={i} className="text-base md:text-lg text-white/85 mb-2 max-w-xl">{it}</p>
             ))}
           </div>
         </div>
       )
 
-    case 'divider':
+    case 'divider': {
+      const bg = slide.bgColor || c2
+      const autoTxt = readableTextColor(bg)
+      const txt = slide.textColor && !isLowContrast(slide.textColor, bg) ? slide.textColor : autoTxt
       return (
-        <div className="w-full h-full flex flex-col items-center justify-center text-center px-10" style={{ background: c2 }}>
-          <h2 className="text-2xl md:text-4xl max-w-3xl" style={{ ...titleStyle, color: t2 }}>{slide.title}</h2>
-          {slide.subtitle && <p className="mt-5 max-w-xl" style={{ color: t2, opacity: 0.75 }}>{slide.subtitle}</p>}
+        <div className="w-full h-full flex flex-col items-center justify-center text-center px-10" style={{ background: bg }}>
+          <h2 className="auto-fade-item text-2xl md:text-4xl max-w-3xl" style={{ ...titleStyle, color: txt }}>{slide.title}</h2>
+          {slide.subtitle && <p className="auto-fade-item mt-5 max-w-xl" style={{ color: txt, opacity: 0.75, animationDelay: '120ms' }}>{slide.subtitle}</p>}
         </div>
       )
+    }
 
     case 'agenda':
       return (
@@ -444,10 +905,13 @@ function SlideView({ slide, c1, c2, c3, revealCount }) {
     case 'profile':
       return (
         <SplitLayout image={slide.image} radius={radius} imageRight>
-          <h2 className="text-2xl md:text-3xl mb-6" style={titleStyle}>{slide.title}</h2>
-          {slide.items.map((it, i) => (
-            <Reveal key={i} i={i} revealCount={revealCount} className="text-ink/80 whitespace-pre-line mb-4 leading-relaxed">{it}</Reveal>
-          ))}
+          <div className="max-w-md">
+            <h2 className="auto-left-item text-2xl md:text-3xl mb-6" style={titleStyle}>{slide.title}</h2>
+            {/* todos os textos aparecem juntos, vindos da esquerda, sem precisar clicar */}
+            {slide.items.map((it, i) => (
+              <p key={i} className="auto-left-item text-ink/80 whitespace-pre-line mb-4 leading-relaxed">{it}</p>
+            ))}
+          </div>
         </SplitLayout>
       )
 
@@ -484,7 +948,7 @@ function SlideView({ slide, c1, c2, c3, revealCount }) {
             {slide.items.map((r, i) => (
               <Reveal key={i} i={i} revealCount={revealCount}>
                 <div className="font-semibold" style={{ color: c1 }}>{i + 1}. {r.title}</div>
-                <div className="text-sm text-ink/75 mt-1">{r.body}</div>
+                <div className="text-base text-ink/75 mt-1">{r.body}</div>
               </Reveal>
             ))}
           </div>
@@ -492,35 +956,10 @@ function SlideView({ slide, c1, c2, c3, revealCount }) {
       )
 
     case 'scopeSection':
-      return (
-        <SplitLayout image={slide.image} radius={radius}>
-          <div className="text-3xl mb-3">{iconGlyph(slide.icon)}</div>
-          <h2 className="text-2xl md:text-3xl mb-6" style={titleStyle}>{slide.title}</h2>
-          <div className="space-y-2.5">
-            {slide.items.map((it, i) => (
-              <Reveal key={i} i={i} revealCount={revealCount} className="flex items-start gap-2 text-ink/80">
-                <span style={{ color: c1 }}>●</span><span>{it}</span>
-              </Reveal>
-            ))}
-          </div>
-        </SplitLayout>
-      )
+      return <TopicImageSlide slide={slide} c1={c1} revealCount={revealCount} radius={radius} />
 
     case 'modeling':
-      return (
-        <div className="w-full h-full grid grid-cols-1 md:grid-cols-2 bg-sand">
-          <div className="p-10 md:p-16 flex flex-col justify-center">
-            <h2 className="text-2xl md:text-3xl mb-6" style={titleStyle}>{slide.title}</h2>
-            <ul className="space-y-2">
-              {slide.items.map((it, i) => (<Reveal key={i} i={i} revealCount={revealCount} className="text-ink/80">• {it}</Reveal>))}
-            </ul>
-          </div>
-          <div className="grid grid-rows-2 gap-1 p-1">
-            <SlideImage src={slide.image} className="w-full h-full" style={{ borderRadius: radius }} />
-            <SlideImage src={slide.image2} className="w-full h-full" style={{ borderRadius: radius }} />
-          </div>
-        </div>
-      )
+      return <TopicImageSlide slide={slide} c1={c1} revealCount={revealCount} radius={radius} />
 
     case 'journeyFlow':
       return <JourneyFlowSlide slide={slide} c1={c1} c2={c2} t2={t2} revealCount={revealCount} radius={radius} />
@@ -531,13 +970,14 @@ function SlideView({ slide, c1, c2, c3, revealCount }) {
           <h2 className="text-2xl md:text-3xl mb-8" style={titleStyle}>{slide.title}</h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {slide.stages.map((s, i) => (
-              <Reveal key={i} i={i} revealCount={revealCount} className="bg-white border border-line p-5" style={{ borderRadius: radius }}>
-                <div className="font-semibold mb-3" style={{ color: c1 }}>{i + 1}. {s.title}</div>
-                <ul className="space-y-1.5 text-sm text-ink/75">{s.items.map((it, k) => <li key={k}>• {it}</li>)}</ul>
+              <Reveal key={i} i={i} revealCount={revealCount} className="bg-white border border-line p-5 flex flex-col" style={{ borderRadius: radius }}>
+                <div className="font-semibold mb-3 text-lg" style={{ color: c1 }}>{i + 1}. {s.title}</div>
+                <ul className="space-y-1.5 text-base text-ink/75 mb-3">{s.items.map((it, k) => <li key={k}>• {it}</li>)}</ul>
+                {s.image && <img src={s.image} alt="" className="mt-auto w-full h-28 object-cover rounded-md" />}
               </Reveal>
             ))}
           </div>
-          {slide.footnote && <p className="text-xs text-muted mt-8 max-w-2xl">{slide.footnote}</p>}
+          {slide.footnote && <p className="text-sm text-muted mt-8 max-w-2xl">{slide.footnote}</p>}
         </div>
       )
 
@@ -547,65 +987,82 @@ function SlideView({ slide, c1, c2, c3, revealCount }) {
           <h2 className="text-2xl md:text-4xl mb-10" style={titleStyle}>{slide.title}</h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {slide.items.map((fb, i) => (
-              <Reveal key={i} i={i} revealCount={revealCount} className="bg-white/10 p-5" style={{ borderRadius: radius }}>
-                <div className="flex items-center gap-3 mb-3">
-                  {fb.photoUrl && <img src={fb.photoUrl} crossOrigin="anonymous" className="w-9 h-9 rounded-full object-cover" alt="" />}
-                  <div className="text-sm font-semibold" style={{ color: c1 }}>{fb.name}</div>
-                </div>
-                <div className="text-sm text-white/85">{fb.text}</div>
+              <Reveal key={i} i={i} revealCount={revealCount} className="bg-white/10 overflow-hidden" style={{ borderRadius: radius }}>
+                {fb.printUrl ? (
+                  <img src={fb.printUrl} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  <div className="p-5">
+                    <div className="flex items-center gap-3 mb-3">
+                      {fb.photoUrl && <img src={fb.photoUrl} crossOrigin="anonymous" className="w-9 h-9 rounded-full object-cover" alt="" />}
+                      <div className="text-base font-semibold" style={{ color: c1 }}>{fb.name}</div>
+                    </div>
+                    <div className="text-base text-white/85">{fb.text}</div>
+                  </div>
+                )}
               </Reveal>
             ))}
           </div>
         </div>
       )
 
-    case 'pricingCalc':
+    case 'pricingCalc': {
+      const lastTextStep = slide.items.length
       return (
-        <div className="w-full h-full bg-sand p-10 md:p-16 flex flex-col md:flex-row gap-10 overflow-auto">
-          <div className="flex-1">
-            <h2 className="text-xl md:text-2xl mb-6" style={titleStyle}>{slide.title}</h2>
-            <ul className="space-y-2">
-              {slide.items.map((it, i) => (<Reveal key={i} i={i} revealCount={revealCount} className="text-ink/80 text-sm">• {it}</Reveal>))}
-            </ul>
-          </div>
-          <div className="flex flex-col gap-3 md:w-64 shrink-0">
-            {slide.hourValue && <PriceTag label="Hora técnica" value={slide.hourValue} radius={radius} c1={c1} />}
-            {slide.dayValue && <PriceTag label="Diária de trabalho" value={slide.dayValue} radius={radius} c1={c1} />}
-          </div>
+        <div className="w-full h-full bg-sand p-10 md:p-16 overflow-auto flex flex-col">
+          <h2 className="text-xl md:text-2xl mb-6" style={titleStyle}>{slide.title}</h2>
+          <ul className="space-y-2 max-w-xl">
+            {slide.items.map((it, i) => (<Reveal key={i} i={i} revealCount={revealCount} className="text-ink/80 text-base">• {it}</Reveal>))}
+          </ul>
+          {(slide.hourValue || slide.dayValue) && (
+            <Reveal i={lastTextStep} revealCount={revealCount} className="flex-1 flex items-center justify-center">
+              <div className="flex flex-col sm:flex-row gap-3">
+                {slide.hourValue && <PriceTag label="Hora técnica" value={slide.hourValue} radius={radius} c1={c1} />}
+                {slide.dayValue && <PriceTag label="Diária de trabalho" value={slide.dayValue} radius={radius} c1={c1} />}
+              </div>
+            </Reveal>
+          )}
         </div>
       )
+    }
 
     case 'packagePricing':
       return (
-        <div className="w-full h-full bg-sand p-10 md:p-16 overflow-auto">
-          <h2 className="text-2xl md:text-3xl mb-2" style={titleStyle}>{slide.title}</h2>
-          <div className="text-3xl font-semibold mb-2" style={{ color: c1, fontFamily: STYLE.displayFont }}>{slide.value}</div>
-          {slide.schedule.length > 0 && <div className="text-sm text-ink/60 mb-8">{slide.schedule.join(' · ')}</div>}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {slide.paymentCards.map((p, i) => (
-              <Reveal
-                key={p.id} i={i} revealCount={revealCount}
-                className="p-5"
-                style={{
-                  borderRadius: radius,
-                  background: p.highlight ? c2 : 'white',
-                  color: p.highlight ? t2 : '#28313C',
-                  border: p.highlight ? 'none' : '1px solid #E4DFD6',
-                  boxShadow: p.highlight ? '0 8px 24px rgba(0,0,0,0.12)' : 'none',
-                }}
-              >
-                <div className="text-xs uppercase tracking-wide opacity-70 mb-1">{p.label}{p.highlight ? ' ★' : ''}</div>
-                <div className="text-xl font-semibold mb-1" style={{ color: c1, fontFamily: STYLE.displayFont }}>{p.value}</div>
-                {p.detail && <div className="text-xs opacity-70">{p.detail}</div>}
-              </Reveal>
-            ))}
+        <div className="w-full h-full bg-sand p-10 md:p-16 overflow-auto flex flex-col items-center justify-center text-center">
+          <div className="w-full max-w-2xl">
+            <h2 className="text-2xl md:text-3xl mb-2" style={titleStyle}>{slide.title}</h2>
+            <Reveal i={0} revealCount={revealCount}>
+              <div className="text-3xl font-semibold mb-2" style={{ color: c1, fontFamily: STYLE.displayFont }}>{slide.value}</div>
+              {slide.schedule.length > 0 && <div className="text-sm text-ink/60 mb-8">{slide.schedule.join(' · ')}</div>}
+            </Reveal>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-left">
+              {slide.paymentCards.map((p, i) => (
+                <Reveal
+                  key={p.id} i={i + 1} revealCount={revealCount}
+                  className="p-5"
+                  style={{
+                    borderRadius: radius,
+                    background: p.highlight ? c2 : 'white',
+                    color: p.highlight ? t2 : '#28313C',
+                    border: p.highlight ? 'none' : '1px solid #E4DFD6',
+                    boxShadow: p.highlight ? '0 8px 24px rgba(0,0,0,0.12)' : 'none',
+                  }}
+                >
+                  <div className="text-xs uppercase tracking-wide opacity-70 mb-1">{p.label}{p.highlight ? ' ★' : ''}</div>
+                  <div className="text-xl font-semibold mb-1" style={{ color: p.highlight ? c1OnC2 : c1, fontFamily: STYLE.displayFont }}>{p.value}</div>
+                  {p.detail && <div className="text-xs opacity-70">{p.detail}</div>}
+                </Reveal>
+              ))}
+            </div>
           </div>
         </div>
       )
 
     case 'video':
       return (
-        <div className="w-full h-full bg-ink flex items-center justify-center p-10">
+        <div className="w-full h-full bg-ink flex items-center justify-center p-10 relative">
+          {slide.title && (
+            <div className="absolute top-5 left-6 md:top-7 md:left-8 text-white/85 text-sm md:text-base font-medium tracking-wide z-10">{slide.title}</div>
+          )}
           {slide.videoUrl ? (
             <video src={slide.videoUrl} controls className="max-w-full max-h-full" style={{ borderRadius: STYLE.radius }} />
           ) : slide.embedUrl ? (
@@ -614,7 +1071,7 @@ function SlideView({ slide, c1, c2, c3, revealCount }) {
             <div className="text-white/50 text-center">
               <div className="text-4xl mb-3">▶</div>
               <div>Nenhum vídeo adicionado ainda.</div>
-              <div className="text-sm mt-1">Adicione no editor da proposta.</div>
+              <div className="text-sm mt-1">Clique em "✎ Editar slide" para enviar um vídeo.</div>
             </div>
           )}
         </div>
@@ -630,7 +1087,13 @@ function SlideView({ slide, c1, c2, c3, revealCount }) {
             ))}
           </div>
           <div className="order-1 md:order-2 relative">
-            {slide.videoUrl ? <video src={slide.videoUrl} controls className="w-full h-full object-cover" /> : <SlideImage src={slide.image} className="w-full h-full" />}
+            {slide.embedUrl ? (
+              <iframe src={slide.embedUrl} className="w-full h-full" allowFullScreen title="video" />
+            ) : slide.videoUrl ? (
+              <video src={slide.videoUrl} controls className="w-full h-full object-cover" />
+            ) : (
+              <SlideImage src={slide.image} className="w-full h-full" />
+            )}
           </div>
         </div>
       )
@@ -639,7 +1102,7 @@ function SlideView({ slide, c1, c2, c3, revealCount }) {
       return (
         <div className="w-full h-full flex flex-col items-center justify-center text-center px-10" style={{ background: c2 }}>
           <h2 className="text-xl md:text-2xl mb-6" style={{ ...titleStyle, color: t2, opacity: 0.9 }}>{slide.headline}</h2>
-          <p className="text-xl md:text-2xl italic max-w-2xl" style={{ color: c1, fontFamily: STYLE.displayFont }}>&ldquo;{slide.quote}&rdquo;</p>
+          <p className="text-xl md:text-2xl italic max-w-2xl" style={{ color: c1OnC2, fontFamily: STYLE.displayFont }}>&ldquo;{slide.quote}&rdquo;</p>
           {slide.author && <p className="text-sm mt-4 tracking-wide" style={{ color: t2, opacity: 0.6 }}>{slide.author}</p>}
         </div>
       )
@@ -650,19 +1113,21 @@ function SlideView({ slide, c1, c2, c3, revealCount }) {
 }
 
 function JourneyFlowSlide({ slide, c1, c2, t2, revealCount, radius }) {
+  const stepImages = slide.stepImages || []
   return (
     <div className="w-full h-full bg-sand p-8 md:p-14 overflow-auto">
       <h2 className="text-2xl md:text-4xl mb-2" style={titleStyle}>{slide.title}</h2>
-      <p className="text-sm text-muted mb-8">Do primeiro contato até a chave na mão</p>
+      <p className="text-sm text-muted mb-8">{slide.subtitle}</p>
       <div className="flex flex-wrap gap-x-3 gap-y-4">
         {slide.items.map((it, i) => (
           <Reveal key={i} i={i} revealCount={revealCount} className="flex items-center gap-3">
             <div
-              className="flex flex-col items-start justify-center px-4 py-3 min-w-[180px] max-w-[220px]"
+              className="flex flex-col items-start justify-center px-4 py-3 min-w-[180px] max-w-[220px] overflow-hidden"
               style={{ borderRadius: radius, background: i % 2 === 0 ? c2 : 'white', color: i % 2 === 0 ? t2 : '#28313C', border: i % 2 === 0 ? 'none' : '1px solid #E4DFD6', boxShadow: '0 4px 14px rgba(0,0,0,0.06)' }}
             >
               <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold mb-2" style={{ background: c1, color: readableTextColor(c1) }}>{i + 1}</div>
-              <div className="text-sm leading-snug">{it}</div>
+              <div className="text-base leading-snug mb-2">{it}</div>
+              {stepImages[i] && <img src={stepImages[i]} alt="" className="w-full h-20 object-cover rounded-md" />}
             </div>
             {i < slide.items.length - 1 && <div className="hidden md:block text-2xl" style={{ color: c1 }}>→</div>}
           </Reveal>
@@ -692,6 +1157,51 @@ function SplitLayout({ image, radius, imageRight = false, children }) {
   return (
     <div className="w-full h-full grid grid-cols-1 md:grid-cols-2 bg-sand">
       {imageRight ? (<>{text}<div className="hidden md:block">{img}</div></>) : (<><div className="hidden md:block">{img}</div>{text}</>)}
+    </div>
+  )
+}
+
+/**
+ * Layout usado nas seções de escopo e na modelagem 3D: título centralizado no topo,
+ * tópicos à esquerda logo abaixo (aparecem juntos, sem clique), e as imagens embaixo,
+ * lado a lado ou em grade — cada uma aparecendo a um clique, na ordem em que foram
+ * adicionadas. Sem imagem nenhuma, o texto ocupa o espaço todo de um jeito mais legível.
+ */
+function TopicImageSlide({ slide, c1, revealCount, radius }) {
+  const imgs = effectiveImages(slide)
+  const layout = slide.imageLayout || 'row'
+  const hasImages = imgs.length > 0
+
+  return (
+    <div className="w-full h-full bg-sand p-8 md:p-14 overflow-auto flex flex-col">
+      <h2 className="auto-fade-item text-center text-2xl md:text-3xl mb-2" style={titleStyle}>{slide.title}</h2>
+      {slide.description && (
+        <p className="auto-fade-item text-center text-ink/70 max-w-2xl mx-auto mb-6" style={{ animationDelay: '80ms' }}>{slide.description}</p>
+      )}
+
+      <div className={hasImages ? 'mb-8' : 'flex-1 flex items-center'}>
+        <div className={hasImages ? 'flex flex-wrap gap-x-8 gap-y-2' : 'grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-3 w-full max-w-3xl mx-auto'}>
+          {slide.items.map((it, i) => (
+            <div key={i} className={`auto-left-item flex items-start gap-2 text-ink/80 ${hasImages ? '' : 'text-lg'}`} style={{ animationDelay: `${i * 40}ms` }}>
+              <span style={{ color: c1 }}>●</span><span>{it}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {hasImages && (
+        <div className={layout === 'grid' ? 'grid grid-cols-2 gap-3 flex-1 min-h-0' : 'flex flex-wrap gap-3 flex-1 min-h-0'}>
+          {imgs.map((img, i) => (
+            <Reveal
+              key={i} i={i} revealCount={revealCount}
+              className="overflow-hidden bg-[#DDD6C8]"
+              style={{ borderRadius: radius, flex: layout === 'row' ? '1 1 0' : undefined, aspectRatio: RATIO_CSS[img.ratio] || undefined, minWidth: layout === 'row' ? 160 : undefined }}
+            >
+              <SlideImage src={img.url} className="w-full h-full" style={{ objectPosition: `${img.posX ?? 50}% ${img.posY ?? 50}%` }} />
+            </Reveal>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

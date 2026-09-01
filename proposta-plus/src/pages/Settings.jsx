@@ -97,12 +97,8 @@ export default function Settings() {
           <Field label="Cidade(s) de atuação" value={settings.city} onChange={(v) => persistSettings({ city: v })} />
           <Field label="Instagram" value={settings.instagram} onChange={(v) => persistSettings({ instagram: v })} />
           <Field label="WhatsApp" value={settings.whatsapp} onChange={(v) => persistSettings({ whatsapp: v })} />
-          <div>
-            <label className="text-sm font-medium text-ink block mb-1">Sobre você (aparece no slide de apresentação pessoal)</label>
-            <textarea
-              value={settings.bio || ''} onChange={(e) => persistSettings({ bio: e.target.value })}
-              rows={4} className="w-full text-sm p-3 rounded-lg border border-line outline-none focus:border-clay"
-            />
+          <div className="text-sm text-muted bg-sand border border-line rounded-lg p-3">
+            O texto de apresentação pessoal (bio, cidades de atuação, missão) agora é editado direto no slide "Sobre mim" da apresentação — clique em <strong>✎ Editar slide</strong> lá. Isso evita ter dois lugares diferentes controlando o mesmo texto.
           </div>
         </div>
       )}
@@ -114,6 +110,16 @@ export default function Settings() {
           <TextBlock label="Frase de encerramento" value={content.shared.closingQuote} onChange={(v) => persistContent({ shared: { ...content.shared, closingQuote: v } })} />
           <TextBlock label="Autor(a) da frase" value={content.shared.closingAuthor} onChange={(v) => persistContent({ shared: { ...content.shared, closingAuthor: v } })} />
           <TextBlock label="Título de encerramento" value={content.shared.closingHeadline} onChange={(v) => persistContent({ shared: { ...content.shared, closingHeadline: v } })} />
+
+          <div>
+            <label className="text-sm font-medium text-ink block mb-1">Sobre mim (bio, cidades e missão — use linhas em branco para separar parágrafos)</label>
+            <textarea
+              value={content.shared.aboutBody || ''}
+              onChange={(e) => persistContent({ shared: { ...content.shared, aboutBody: e.target.value } })}
+              rows={6} className="w-full text-sm p-3 rounded-lg border border-line outline-none focus:border-clay font-mono"
+            />
+          </div>
+          <TextBlock label="Registro profissional (CAU, CREA…)" value={content.shared.aboutRegistration} onChange={(v) => persistContent({ shared: { ...content.shared, aboutRegistration: v } })} />
 
           <ListBlock
             label="O que será apresentado (agenda)"

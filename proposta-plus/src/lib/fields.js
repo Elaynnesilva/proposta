@@ -116,16 +116,29 @@ export const FIELD_GROUPS = [
     fields: [
       ['acompanhamentoObraMeses', 'Acompanhamento de obra (mêses)', ''],
       ['acompanhamentoObraDias', 'Acompanhamento de obra (dias por mês)', ''],
+      ['acompanhamentoObraDescricao', 'Descrição do serviço de acompanhamento', ''],
     ],
   },
 ]
 
 export const ALL_FIELD_CODES = [...new Set(FIELD_GROUPS.flatMap((g) => g.fields.map(([code]) => code)))]
 export const FIELD_LABELS = Object.fromEntries(FIELD_GROUPS.flatMap((g) => g.fields.map(([code, label]) => [code, label])))
+
+/** minúsculo e sem acento — assim "mêses" e "meses" (ou qualquer variação de acentuação) casam com o mesmo campo */
+export function normalizeLabel(s) {
+  return String(s || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+}
+
 // mesma variável pode ter mais de um rótulo na planilha (ex: "Pacote Completo" e "Valor do
-// Pacote Completo" são o mesmo valor) — este mapa reconhece TODOS os rótulos possíveis.
+// Pacote Completo" são o mesmo valor) — este mapa reconhece TODOS os rótulos possíveis,
+// já normalizados (sem acento), para colar continuar funcionando mesmo se a pessoa
+// corrigir/alterar acentuação do cabeçalho na própria planilha.
 export const LABEL_TO_CODE = Object.fromEntries(
-  FIELD_GROUPS.flatMap((g) => g.fields.map(([code, label]) => [label.toLowerCase(), code]))
+  FIELD_GROUPS.flatMap((g) => g.fields.map(([code, label]) => [normalizeLabel(label), code]))
 )
 export const LIST_FIELD_CODES = new Set(
   FIELD_GROUPS.flatMap((g) => g.fields.filter(([, , , isList]) => isList).map(([code]) => code))
@@ -156,6 +169,25 @@ export function hasValue(v) {
   const n = parseFloat(cleaned)
   if (!isNaN(n) && n === 0) return false
   return true
+}
+
+/**
+ * Converte um prazo decimal em meses (ex: 1,62) para texto aproximado em
+ * meses e dias (ex: "1 mês e 19 dias"), somando ainda uma margem de erro
+ * em dias (padrão 2) mostrada só como nota — nunca usada no cálculo principal.
+ * Uso: informativo para a própria arquiteta no editor, não aparece na apresentação.
+ */
+export function mesesParaTexto(valor, toleranciaDias = 2) {
+  if (!hasValue(valor)) return ''
+  const n = parseFloat(String(valor).replace(',', '.'))
+  if (isNaN(n)) return ''
+  const meses = Math.floor(n)
+  const dias = Math.round((n - meses) * 30)
+  const partes = []
+  if (meses > 0) partes.push(`${meses} ${meses === 1 ? 'mês' : 'meses'}`)
+  if (dias > 0) partes.push(`${dias} dias`)
+  const base = partes.length ? partes.join(' e ') : '0 dias'
+  return `≈ ${base} (+ ${toleranciaDias} dias de tolerância)`
 }
 
 /** Formata número como moeda BRL quando fizer sentido */

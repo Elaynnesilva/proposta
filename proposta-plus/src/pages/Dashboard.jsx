@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recharts'
 import { listProposals, saveProposal, deleteProposal } from '../lib/db'
-import { defaultFieldsObject } from '../lib/fields'
+import { defaultFieldsObject, PACKAGE_LIST } from '../lib/fields'
 import { DEFAULT_PALETTE } from '../lib/templates'
 
 const STATUS = {
@@ -112,6 +112,9 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {/* Agenda — apresentações marcadas + prazos de propostas aceitas */}
+      <AgendaSection proposals={proposals} onOpen={(id) => navigate(`/proposta/${id}/editar`)} />
+
       {loading ? (
         <div className="text-sm text-muted">Carregando…</div>
       ) : proposals.length === 0 ? (
@@ -179,6 +182,122 @@ export default function Dashboard() {
       )}
     </div>
   )
+}
+
+function AgendaSection({ proposals, onOpen }) {
+  const [cursor, setCursor] = useState(() => { const d = new Date(); d.setDate(1); return d })
+  const [selectedKey, setSelectedKey] = useState(null)
+
+  // extrai todos os eventos relevantes de todas as propostas: apresentações marcadas
+  // e, para propostas aceitas, o início/fim do primeiro pacote com data preenchida
+  const events = useMemo(() => {
+    const list = []
+    proposals.forEach((p) => {
+      if (p.scheduledAt) {
+        const d = new Date(p.scheduledAt)
+        if (!isNaN(d)) {
+          list.push({ date: d, label: `Apresentação — ${p.name || 'Sem nome'}`, proposalId: p.id, kind: 'apresentacao' })
+        }
+      }
+      if (p.status === 'aceita') {
+        const pkg = PACKAGE_LIST.find((pk) => parseBrDate(p.fields?.[`${pk.id}Inicio`]))
+        if (pkg) {
+          const inicio = parseBrDate(p.fields?.[`${pkg.id}Inicio`])
+          const fim = parseBrDate(p.fields?.[`${pkg.id}Fim`])
+          if (inicio) list.push({ date: inicio, label: `Início do projeto — ${p.name || 'Sem nome'}`, proposalId: p.id, kind: 'inicio' })
+          if (fim) list.push({ date: fim, label: `Entrega do projeto — ${p.name || 'Sem nome'}`, proposalId: p.id, kind: 'fim' })
+        }
+      }
+    })
+    return list
+  }, [proposals])
+
+  const eventsByDay = useMemo(() => {
+    const map = new Map()
+    events.forEach((e) => {
+      const key = dayKey(e.date)
+      if (!map.has(key)) map.set(key, [])
+      map.get(key).push(e)
+    })
+    return map
+  }, [events])
+
+  const year = cursor.getFullYear()
+  const month = cursor.getMonth()
+  const firstWeekday = new Date(year, month, 1).getDay()
+  const daysInMonth = new Date(year, month + 1, 0).getDate()
+  const monthLabel = cursor.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })
+  const todayKey = dayKey(new Date())
+
+  const cells = []
+  for (let i = 0; i < firstWeekday; i++) cells.push(null)
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d)
+
+  const selectedEvents = selectedKey ? (eventsByDay.get(selectedKey) || []) : []
+
+  if (events.length === 0) {
+    return null // sem nenhum evento ainda — não vale poluir a tela com uma agenda vazia
+  }
+
+  return (
+    <div className="bg-white border border-line rounded-2xl p-5 mb-10">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="font-medium text-ink capitalize">📅 Agenda — {monthLabel}</h3>
+        <div className="flex gap-1">
+          <button onClick={() => setCursor(new Date(year, month - 1, 1))} className="w-7 h-7 rounded-full border border-line hover:bg-sand text-sm">‹</button>
+          <button onClick={() => setCursor(new Date(year, month + 1, 1))} className="w-7 h-7 rounded-full border border-line hover:bg-sand text-sm">›</button>
+        </div>
+      </div>
+      <div className="grid grid-cols-7 gap-1 text-center text-[10px] text-muted uppercase mb-1">
+        {['D', 'S', 'T', 'Q', 'Q', 'S', 'S'].map((d, i) => <div key={i}>{d}</div>)}
+      </div>
+      <div className="grid grid-cols-7 gap-1">
+        {cells.map((d, i) => {
+          if (!d) return <div key={i} />
+          const key = `${year}-${month}-${d}`
+          const dayEvents = eventsByDay.get(key) || []
+          const isToday = key === todayKey
+          return (
+            <button
+              key={i}
+              onClick={() => dayEvents.length && setSelectedKey(key === selectedKey ? null : key)}
+              className={`aspect-square rounded-lg text-xs flex flex-col items-center justify-center gap-0.5 transition ${selectedKey === key ? 'bg-ink text-white' : isToday ? 'bg-sand font-semibold' : dayEvents.length ? 'hover:bg-sand' : ''}`}
+            >
+              <span>{d}</span>
+              {dayEvents.length > 0 && <span className={`w-1.5 h-1.5 rounded-full ${selectedKey === key ? 'bg-white' : 'bg-clay'}`} />}
+            </button>
+          )
+        })}
+      </div>
+
+      {selectedEvents.length > 0 && (
+        <div className="mt-4 pt-4 border-t border-line space-y-2">
+          {selectedEvents.map((e, i) => (
+            <button key={i} onClick={() => onOpen(e.proposalId)} className="w-full text-left text-sm px-3 py-2 rounded-lg border border-line hover:bg-sand flex items-center gap-2">
+              <span>{e.kind === 'apresentacao' ? '🗣️' : e.kind === 'inicio' ? '🚀' : '🏁'}</span>
+              <span className="flex-1">{e.label}</span>
+              <span className="text-xs text-muted">→</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Converte "08/09/2026" (ou com hora) para Date; retorna null se não reconhecer o formato */
+function parseBrDate(s) {
+  if (!s) return null
+  const m = String(s).trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/)
+  if (!m) return null
+  const [, dd, mm, yyyy] = m
+  const year = yyyy.length === 2 ? `20${yyyy}` : yyyy
+  const d = new Date(Number(year), Number(mm) - 1, Number(dd))
+  return isNaN(d) ? null : d
+}
+
+function dayKey(date) {
+  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`
 }
 
 function AcceptValueForm({ defaultValue, onConfirm }) {

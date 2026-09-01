@@ -20,8 +20,9 @@ import {
   collection, getDocs, query, orderBy,
   serverTimestamp, addDoc, updateDoc,
 } from 'firebase/firestore'
-import { auth, db, googleProvider } from './firebase'
+import { auth, db, googleProvider, storage } from './firebase'
 import { defaultFieldsObject } from './fields'
+import { ref, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage'
 
 let cachedUser = null
 
@@ -120,6 +121,36 @@ export async function deleteProposal(id) {
   await deleteDoc(doc(db, 'users', uid, 'proposals', id))
 }
 
+/* ---------------- VÍDEO (Firebase Storage — sem limite prático de tamanho, ao contrário do Firestore) ---------------- */
+
+/**
+ * Envia um vídeo para o Firebase Storage (não para o Firestore, que tem limite de 1MB
+ * por documento — era por isso que vídeos grandes travavam ou sumiam ao atualizar a página).
+ * Retorna a URL final para salvar no campo videoUrl da proposta ou do slide.
+ */
+export function uploadVideo(file, onProgress) {
+  const uid = requireUid()
+  const path = `users/${uid}/videos/${Date.now()}-${file.name.replace(/[^\w.\-]/g, '_')}`
+  const storageRef = ref(storage, path)
+  const task = uploadBytesResumable(storageRef, file)
+  return new Promise((resolve, reject) => {
+    task.on(
+      'state_changed',
+      (snap) => onProgress?.(Math.round((snap.bytesTransferred / snap.totalBytes) * 100)),
+      (err) => reject(err),
+      async () => {
+        const url = await getDownloadURL(task.snapshot.ref)
+        resolve({ url, path })
+      }
+    )
+  })
+}
+
+export async function deleteVideo(path) {
+  if (!path) return
+  try { await deleteObject(ref(storage, path)) } catch { /* já pode ter sido removido — ignora */ }
+}
+
 /* ---------------- CONFIGURAÇÕES DA EMPRESA ---------------- */
 
 export async function getSettings() {
@@ -129,6 +160,7 @@ export async function getSettings() {
   return {
     companyName: '', professionalName: '', registration: '', bio: '',
     city: '', logoDataUrl: '', instagram: '', whatsapp: '',
+    savedSwatches: [], savedPalettes: [],
     ...(data.settings || {}),
   }
 }
@@ -137,6 +169,31 @@ export async function saveSettings(settings) {
   const uid = requireUid()
   await setDoc(doc(db, 'users', uid), { settings }, { merge: true })
   return settings
+}
+
+/** Adiciona uma cor à cesta de cores salvas (quadradinhos), sem duplicar */
+export async function addSavedSwatch(hex) {
+  const settings = await getSettings()
+  const set = new Set(settings.savedSwatches || [])
+  set.add(hex.toUpperCase())
+  const next = { ...settings, savedSwatches: [...set].slice(-24) }
+  return saveSettings(next)
+}
+
+/** Salva a paleta atual (3 cores) como um modelo nomeado, reutilizável em qualquer proposta */
+export async function addSavedPalette(name, palette) {
+  const settings = await getSettings()
+  const list = [...(settings.savedPalettes || []), { id: Date.now().toString(), name, palette }]
+  const next = { ...settings, savedPalettes: list }
+  await saveSettings(next)
+  return next
+}
+
+export async function removeSavedPalette(paletteId) {
+  const settings = await getSettings()
+  const next = { ...settings, savedPalettes: (settings.savedPalettes || []).filter((p) => p.id !== paletteId) }
+  await saveSettings(next)
+  return next
 }
 
 /* ---------------- CONTEÚDO DO MODELO (textos + imagens padrão) ---------------- */

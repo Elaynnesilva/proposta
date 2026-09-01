@@ -1,12 +1,13 @@
 import React, { useState } from 'react'
-import { FIELD_GROUPS, ALL_FIELD_CODES, LABEL_TO_CODE, LIST_FIELD_CODES } from '../lib/fields'
+import { FIELD_GROUPS, ALL_FIELD_CODES, LABEL_TO_CODE, LIST_FIELD_CODES, normalizeLabel, mesesParaTexto } from '../lib/fields'
 
 // tenta casar o texto que a pessoa colou na 1a coluna com um campo conhecido,
 // aceitando o nome interno OU qualquer um dos rotulos em portugues daquele campo
+// (sem diferenciar maiúsculas/minúsculas nem acentuação — "mêses" e "meses" casam igual)
 function matchCode(rawLabel) {
   const clean = rawLabel.trim().replace(/^\{|\}$/g, '')
   if (ALL_FIELD_CODES.includes(clean)) return clean
-  return LABEL_TO_CODE[clean.toLowerCase()] || null
+  return LABEL_TO_CODE[normalizeLabel(clean)] || null
 }
 
 export default function DataTable({ fields, onChange }) {
@@ -22,19 +23,32 @@ export default function DataTable({ fields, onChange }) {
     const next = { ...fields }
     const listBuffers = {} // acumula linhas repetidas dos campos-lista nesta colagem
     let matched = 0
+    let lastCode = null // para reconectar quando um valor colado quebra em mais de uma "linha" (célula com múltiplas linhas)
+    let lastIsList = false
     pasteText.split('\n').forEach((line) => {
       if (!line.trim()) return
       const parts = line.split('\t')
-      if (parts.length < 2) return
-      const code = matchCode(parts[0])
-      const value = parts.slice(1).join('\t').trim()
-      if (!code) return
-      matched++
-      if (LIST_FIELD_CODES.has(code)) {
-        if (!listBuffers[code]) listBuffers[code] = []
-        if (value) listBuffers[code].push(value)
-      } else {
-        next[code] = value
+      const code = parts.length >= 2 ? matchCode(parts[0]) : null
+
+      if (code) {
+        // linha normal "rótulo\tvalor"
+        const value = parts.slice(1).join('\t').trim()
+        matched++
+        lastCode = code
+        lastIsList = LIST_FIELD_CODES.has(code)
+        if (lastIsList) {
+          if (!listBuffers[code]) listBuffers[code] = []
+          if (value) listBuffers[code].push(value)
+        } else {
+          next[code] = value
+        }
+        return
+      }
+
+      // linha sem rótulo reconhecido: se o campo anterior não é de lista, tratamos
+      // como continuação do texto dele (ex: descrição colada com quebra de linha)
+      if (lastCode && !lastIsList && line.trim()) {
+        next[lastCode] = next[lastCode] ? `${next[lastCode]}\n${line.trim()}` : line.trim()
       }
     })
     Object.entries(listBuffers).forEach(([code, items]) => {
@@ -109,11 +123,16 @@ export default function DataTable({ fields, onChange }) {
                         className="text-sm p-2 rounded-lg border border-line outline-none focus:border-clay w-full font-mono"
                       />
                     ) : (
-                      <input
-                        value={fields[code] || ''}
-                        onChange={(e) => setField(code, e.target.value)}
-                        className="text-sm p-2 rounded-lg border border-line outline-none focus:border-clay w-full"
-                      />
+                      <div>
+                        <input
+                          value={fields[code] || ''}
+                          onChange={(e) => setField(code, e.target.value)}
+                          className="text-sm p-2 rounded-lg border border-line outline-none focus:border-clay w-full"
+                        />
+                        {code.endsWith('PrazoMeses') && mesesParaTexto(fields[code]) && (
+                          <div className="text-[11px] text-muted mt-1 text-right">{mesesParaTexto(fields[code])}</div>
+                        )}
+                      </div>
                     )}
                   </div>
                 ))}
