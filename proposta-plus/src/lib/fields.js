@@ -191,18 +191,22 @@ export function mesesParaTexto(valor, toleranciaDias = 2) {
 }
 
 /** Converte um link comum do YouTube/Vimeo (compartilhamento, watch, youtu.be) para o formato
- *  de incorporação (/embed/), que é o único que funciona dentro de um iframe. */
+ *  de incorporação (/embed/), que é o único que funciona dentro de um iframe. Também reduz a
+ *  marca do YouTube (sem precisar de login: sempre aparece o nome do canal, isso o YouTube não deixa tirar). */
 export function toEmbedUrl(url) {
   const u = (url || '').trim()
   if (!u) return u
+  const params = 'modestbranding=1&rel=0&iv_load_policy=3&color=white'
   let m = u.match(/youtu\.be\/([\w-]+)/)
-  if (m) return `https://www.youtube.com/embed/${m[1]}`
+  if (m) return `https://www.youtube.com/embed/${m[1]}?${params}`
   m = u.match(/youtube\.com\/watch\?v=([\w-]+)/)
-  if (m) return `https://www.youtube.com/embed/${m[1]}`
+  if (m) return `https://www.youtube.com/embed/${m[1]}?${params}`
   m = u.match(/youtube\.com\/shorts\/([\w-]+)/)
-  if (m) return `https://www.youtube.com/embed/${m[1]}`
+  if (m) return `https://www.youtube.com/embed/${m[1]}?${params}`
+  m = u.match(/youtube\.com\/embed\/([\w-]+)/)
+  if (m && !u.includes('?')) return `https://www.youtube.com/embed/${m[1]}?${params}`
   m = u.match(/vimeo\.com\/(\d+)/)
-  if (m) return `https://player.vimeo.com/video/${m[1]}`
+  if (m) return `https://player.vimeo.com/video/${m[1]}?title=0&byline=0&portrait=0`
   return u
 }
 

@@ -121,6 +121,57 @@ export async function deleteProposal(id) {
   await deleteDoc(doc(db, 'users', uid, 'proposals', id))
 }
 
+/** Torna uma proposta acessível por link, sem precisar de login (o cliente vendo a apresentação). */
+export async function setProposalPublic(id, isPublic) {
+  const uid = requireUid()
+  await updateDoc(doc(db, 'users', uid, 'proposals', id), { public: isPublic })
+}
+
+/* ---------------- LEITURA PÚBLICA (link do cliente, sem login) ----------------
+ * Usadas só na página de apresentação pública. Só funcionam se a proposta tiver
+ * public: true (ver setProposalPublic) — a regra de segurança do Firestore garante isso. */
+
+export async function getPublicProposal(uid, id) {
+  const snap = await getDoc(doc(db, 'users', uid, 'proposals', id))
+  if (!snap.exists()) return null
+  return { id: snap.id, ...snap.data() }
+}
+
+export async function getPublicSettings(uid) {
+  const snap = await getDoc(doc(db, 'users', uid))
+  const data = snap.exists() ? snap.data() : {}
+  return { companyName: '', professionalName: '', registration: '', city: '', logoDataUrl: '', instagram: '', whatsapp: '', ...(data.settings || {}) }
+}
+
+export async function getPublicTemplateContent(uid) {
+  const snap = await getDoc(doc(db, 'users', uid))
+  return snap.exists() ? (snap.data().content || {}) : {}
+}
+
+/* ---------------- COMPROMISSOS AVULSOS DA AGENDA (não ligados a nenhuma proposta) ---------------- */
+
+export async function listEvents() {
+  const uid = requireUid()
+  const snap = await getDocs(collection(db, 'users', uid, 'events'))
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+}
+
+export async function saveEvent(event) {
+  const uid = requireUid()
+  const { id, ...data } = event
+  if (id) {
+    await updateDoc(doc(db, 'users', uid, 'events', id), data)
+    return { id, ...data }
+  }
+  const ref = await addDoc(collection(db, 'users', uid, 'events'), data)
+  return { id: ref.id, ...data }
+}
+
+export async function deleteEvent(id) {
+  const uid = requireUid()
+  await deleteDoc(doc(db, 'users', uid, 'events', id))
+}
+
 /* ---------------- VÍDEO (Firebase Storage — sem limite prático de tamanho, ao contrário do Firestore) ---------------- */
 
 /**

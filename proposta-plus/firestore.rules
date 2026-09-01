@@ -2,9 +2,19 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     match /users/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      // leitura aberta: necessário para o link público (o cliente vê a marca/textos padrão sem login).
+      // continua incluindo só marca e textos padrão — nenhuma proposta é lida por aqui.
+      allow read: if true;
+      allow write: if request.auth != null && request.auth.uid == userId;
 
       match /proposals/{proposalId} {
+        // a dona da conta sempre pode ler/escrever; qualquer pessoa só pode LER se a
+        // proposta tiver sido marcada como "public" (botão "Link para o cliente")
+        allow read: if (request.auth != null && request.auth.uid == userId) || resource.data.public == true;
+        allow write: if request.auth != null && request.auth.uid == userId;
+      }
+
+      match /events/{eventId} {
         allow read, write: if request.auth != null && request.auth.uid == userId;
       }
     }

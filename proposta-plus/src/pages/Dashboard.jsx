@@ -19,6 +19,7 @@ export default function Dashboard() {
   const [valueModalId, setValueModalId] = useState(null)
   const [settings, setSettings] = useState(null)
   const [search, setSearch] = useState('')
+  const [filtersOpen, setFiltersOpen] = useState(false)
   const [filterTipologia, setFilterTipologia] = useState('todas')
   const [filterStatus, setFilterStatus] = useState('todas')
   const navigate = useNavigate()
@@ -138,23 +139,38 @@ export default function Dashboard() {
 
       {/* Busca e filtros */}
       {proposals.length > 0 && (
-        <div className="bg-white border border-line rounded-2xl p-4 mb-6 flex flex-col md:flex-row gap-3 md:items-center">
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="🔎 Buscar por nome da proposta ou do cliente…"
-            className="flex-1 text-sm p-2.5 rounded-lg border border-line outline-none focus:border-clay"
-          />
-          <div className="flex gap-1.5 flex-wrap">
-            {[['todas', 'Todas'], ['residencial', 'Residencial'], ['comercial', 'Comercial'], ['corporativo', 'Corporativo']].map(([id, label]) => (
-              <button key={id} onClick={() => setFilterTipologia(id)} className={`text-xs px-3 py-1.5 rounded-full border ${filterTipologia === id ? 'bg-ink text-white border-ink' : 'border-line text-ink/70 hover:bg-sand'}`}>{label}</button>
-            ))}
+        <div className="mb-6">
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={() => setFiltersOpen((v) => !v)}
+              className={`w-9 h-9 rounded-full border flex items-center justify-center transition ${filtersOpen ? 'bg-ink text-white border-ink' : 'border-line text-ink/70 hover:bg-sand bg-white'}`}
+              title="Buscar e filtrar"
+            >🔎</button>
+            {(search || filterTipologia !== 'todas' || filterStatus !== 'todas') && !filtersOpen && (
+              <span className="text-xs text-muted">Filtros ativos — clique na lupa para ajustar</span>
+            )}
           </div>
-          <div className="flex gap-1.5 flex-wrap">
-            {[['todas', 'Qualquer status'], ['aceita', 'Aceitas'], ['recusada', 'Recusadas']].map(([id, label]) => (
-              <button key={id} onClick={() => setFilterStatus(id)} className={`text-xs px-3 py-1.5 rounded-full border ${filterStatus === id ? 'bg-ink text-white border-ink' : 'border-line text-ink/70 hover:bg-sand'}`}>{label}</button>
-            ))}
-          </div>
+          {filtersOpen && (
+            <div className="bg-white border border-line rounded-2xl p-4 mt-2 flex flex-col md:flex-row gap-3 md:items-center">
+              <input
+                autoFocus
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Buscar por nome da proposta ou do cliente…"
+                className="flex-1 text-sm p-2.5 rounded-lg border border-line outline-none focus:border-clay"
+              />
+              <div className="flex gap-1.5 flex-wrap">
+                {[['todas', 'Todas'], ['residencial', 'Residencial'], ['comercial', 'Comercial'], ['corporativo', 'Corporativo']].map(([id, label]) => (
+                  <button key={id} onClick={() => setFilterTipologia(id)} className={`text-xs px-3 py-1.5 rounded-full border ${filterTipologia === id ? 'bg-ink text-white border-ink' : 'border-line text-ink/70 hover:bg-sand'}`}>{label}</button>
+                ))}
+              </div>
+              <div className="flex gap-1.5 flex-wrap">
+                {[['todas', 'Qualquer status'], ['aceita', 'Aceitas'], ['recusada', 'Recusadas']].map(([id, label]) => (
+                  <button key={id} onClick={() => setFilterStatus(id)} className={`text-xs px-3 py-1.5 rounded-full border ${filterStatus === id ? 'bg-ink text-white border-ink' : 'border-line text-ink/70 hover:bg-sand'}`}>{label}</button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -170,7 +186,7 @@ export default function Dashboard() {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {filteredProposals.map((p) => (
-            <div key={p.id} className="bg-white border border-line rounded-2xl p-5 flex flex-col">
+            <div key={p.id} className="bg-white rounded-2xl p-5 flex flex-col transition" style={p.status === 'aceita' ? { border: '2px solid #16803C', boxShadow: '0 4px 16px rgba(22,128,60,0.12)' } : { border: '1px solid #E4DFD6' }}>
               <div className="flex items-start justify-between gap-2 mb-3">
                 {renamingId === p.id ? (
                   <input

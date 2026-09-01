@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { getProposal, getSettings, getTemplateContent, saveProposal, saveTemplateContent } from '../lib/db'
+import { getProposal, getSettings, getTemplateContent, saveProposal, saveTemplateContent, getPublicProposal, getPublicSettings, getPublicTemplateContent, setProposalPublic } from '../lib/db'
+import { auth } from '../lib/firebase'
 import { buildSlides } from '../lib/slides'
 import { DEFAULT_IMAGES, DEFAULT_SHARED_TEXT } from '../lib/content'
 import { STYLE, paletteToCssVars, readableTextColor, isLowContrast, DEFAULT_PALETTE, FIXED_SWATCHES } from '../lib/templates'
@@ -33,7 +34,8 @@ function exportFileName(proposal) {
 }
 
 export default function Presenter() {
-  const { id } = useParams()
+  const { id, uid: publicUid } = useParams()
+  const isPublic = !!publicUid
   const navigate = useNavigate()
   const [proposal, setProposal] = useState(null)
   const [settings, setSettings] = useState(null)
@@ -45,13 +47,20 @@ export default function Presenter() {
   const [exporting, setExporting] = useState(false)
   const [exportProgress, setExportProgress] = useState(0)
   const [exportIndex, setExportIndex] = useState(0)
+  const [linkCopied, setLinkCopied] = useState(false)
   const exportRef = useRef(null)
 
   useEffect(() => {
-    getProposal(id).then(setProposal)
-    getSettings().then(setSettings)
-    getTemplateContent().then(setTemplateContent)
-  }, [id])
+    if (isPublic) {
+      getPublicProposal(publicUid, id).then(setProposal)
+      getPublicSettings(publicUid).then(setSettings)
+      getPublicTemplateContent(publicUid).then(setTemplateContent)
+    } else {
+      getProposal(id).then(setProposal)
+      getSettings().then(setSettings)
+      getTemplateContent().then(setTemplateContent)
+    }
+  }, [id, isPublic, publicUid])
 
   const content = { ...DEFAULT_SHARED_TEXT, ...(templateContent?.shared || {}) }
   const images = proposal
@@ -130,35 +139,60 @@ export default function Presenter() {
   }
 
   function reorder(fromIdx, toIdx) {
-    const ids = slides.map((s) => s.id)
-    const [moved] = ids.splice(fromIdx, 1)
-    ids.splice(toIdx, 0, moved)
-    const next = { ...proposal, slideOrder: ids }
-    setProposal(next)
-    saveProposal(next)
+    setProposal((prev) => {
+      const ids = slides.map((s) => s.id)
+      const [moved] = ids.splice(fromIdx, 1)
+      ids.splice(toIdx, 0, moved)
+      const next = { ...prev, slideOrder: ids }
+      saveProposal(next)
+      return next
+    })
   }
 
+  // IMPORTANTE: as funções abaixo usam a forma funcional do setProposal (prev => ...) em vez de
+  // ler a variável "proposal" direto. Isso evita perder uma edição quando duas mudanças acontecem
+  // em sequência rápida (ex: mudar a posição da imagem e salvar de novo logo em seguida) — antes,
+  // a segunda edição podia silenciosamente "esquecer" a primeira.
   function saveOverridePerProposal(slideId, patch) {
-    const overrides = { ...(proposal.slideOverrides || {}), [slideId]: { ...(proposal.slideOverrides?.[slideId] || {}), ...patch } }
-    const next = { ...proposal, slideOverrides: overrides }
-    setProposal(next)
-    saveProposal(next)
+    setProposal((prev) => {
+      const overrides = { ...(prev.slideOverrides || {}), [slideId]: { ...(prev.slideOverrides?.[slideId] || {}), ...patch } }
+      const next = { ...prev, slideOverrides: overrides }
+      saveProposal(next)
+      return next
+    })
   }
 
   async function saveGlobalContent(slideId, patch) {
-    const shared = mapPatchToSharedContent(slideId, patch, content)
-    const nextContent = { ...(templateContent || {}), shared }
-    setTemplateContent(nextContent)
-    await saveTemplateContent(nextContent)
+    return new Promise((resolve) => {
+      setTemplateContent((prev) => {
+        const shared = mapPatchToSharedContent(slideId, patch, { ...DEFAULT_SHARED_TEXT, ...(prev?.shared || {}) })
+        const nextContent = { ...(prev || {}), shared }
+        saveTemplateContent(nextContent).then(resolve)
+        return nextContent
+      })
+    })
   }
 
   /** Salva o vídeo principal no nível certo: só esta proposta, este tipo de projeto, ou todos os tipos. */
   /** Atualiza campos de "Dados do projeto" direto pelo slide (ex: Descrição do projeto),
    *  garantindo que fique sincronizado com a aba "Dados do projeto" do editor. */
   async function saveFieldsPatch(patch) {
-    const next = { ...proposal, fields: { ...(proposal.fields || {}), ...patch } }
-    setProposal(next)
-    await saveProposal(next)
+    return new Promise((resolve) => {
+      setProposal((prev) => {
+        const next = { ...prev, fields: { ...(prev.fields || {}), ...patch } }
+        saveProposal(next).then(resolve)
+        return next
+      })
+    })
+  }
+
+  /** Atualiza a visibilidade de pacotes/formas de pagamento (mesmo dado da aba "Preços a mostrar" do editor). */
+  function saveVisibilityPatch(patch) {
+    setProposal((prev) => {
+      const next = { ...prev, visibility: { ...(prev.visibility || {}), ...patch, payments: { ...(prev.visibility?.payments || {}), ...(patch.payments || {}) } } }
+      saveProposal(next)
+      return next
+    })
   }
 
   async function saveVideoByScope(scope, patch) {
@@ -167,26 +201,48 @@ export default function Presenter() {
       return
     }
     if (scope === 'tipologia') {
-      const nextImages = { ...(templateContent?.images || {}), [proposal.tipologia]: { ...(templateContent?.images?.[proposal.tipologia] || {}), ...patch } }
-      const nextContent = { ...(templateContent || {}), images: nextImages }
-      setTemplateContent(nextContent)
-      await saveTemplateContent(nextContent)
+      setTemplateContent((prev) => {
+        const nextImages = { ...(prev?.images || {}), [proposal.tipologia]: { ...(prev?.images?.[proposal.tipologia] || {}), ...patch } }
+        const nextContent = { ...(prev || {}), images: nextImages }
+        saveTemplateContent(nextContent)
+        return nextContent
+      })
       return
     }
     // 'allTypes'
-    const nextContent = { ...(templateContent || {}), sharedVideo: { ...(templateContent?.sharedVideo || {}), ...patch } }
-    setTemplateContent(nextContent)
-    await saveTemplateContent(nextContent)
+    setTemplateContent((prev) => {
+      const nextContent = { ...(prev || {}), sharedVideo: { ...(prev?.sharedVideo || {}), ...patch } }
+      saveTemplateContent(nextContent)
+      return nextContent
+    })
   }
 
   function toggleHidden(slideId) {
-    const hidden = new Set(proposal.hiddenSlides || [])
-    hidden.has(slideId) ? hidden.delete(slideId) : hidden.add(slideId)
-    const next = { ...proposal, hiddenSlides: [...hidden] }
-    setProposal(next)
-    saveProposal(next)
-    // se a página atual acabou de ser ocultada, evita ficar preso numa posição inexistente
-    if (hidden.has(slideId)) setIndex((i) => Math.max(0, Math.min(i, visibleSlides.length - 2)))
+    setProposal((prev) => {
+      const hidden = new Set(prev.hiddenSlides || [])
+      hidden.has(slideId) ? hidden.delete(slideId) : hidden.add(slideId)
+      const next = { ...prev, hiddenSlides: [...hidden] }
+      saveProposal(next)
+      if (hidden.has(slideId)) setIndex((i) => Math.max(0, Math.min(i, visibleSlides.length - 2)))
+      return next
+    })
+  }
+
+  async function handleCopyLink() {
+    try {
+      if (!proposal.public) {
+        await setProposalPublic(id, true)
+        setProposal((prev) => ({ ...prev, public: true }))
+      }
+      const uidForLink = auth.currentUser?.uid
+      const url = `${window.location.origin}/ver/${uidForLink}/${id}`
+      await navigator.clipboard.writeText(url)
+      setLinkCopied(true)
+      setTimeout(() => setLinkCopied(false), 3000)
+    } catch (err) {
+      alert('Não consegui gerar o link agora.')
+      console.error(err)
+    }
   }
 
   async function handleExportPdf() {
@@ -199,14 +255,21 @@ export default function Presenter() {
         setExportIndex(i)
         setExportProgress(i + 1)
         // dá um tempinho para a imagem daquele slide carregar antes de "fotografar"
-        await new Promise((resolve) => setTimeout(resolve, 350))
+        await new Promise((resolve) => setTimeout(resolve, 400))
         const node = exportRef.current
-        const canvas = await html2canvas(node, { width: EXPORT_W, height: EXPORT_H, scale: 2, useCORS: true, backgroundColor: '#28313C' })
+        let canvas
+        try {
+          canvas = await html2canvas(node, { width: EXPORT_W, height: EXPORT_H, scale: 2, useCORS: true, allowTaint: true, backgroundColor: '#28313C' })
+        } catch (slideErr) {
+          console.error('Falha ao capturar slide', i, slideErr)
+          continue // pula esse slide em vez de derrubar o PDF inteiro
+        }
         const img = canvas.toDataURL('image/jpeg', 0.92)
         if (!pdf) pdf = new jsPDF({ orientation: 'landscape', unit: 'px', format: [EXPORT_W, EXPORT_H] })
         else pdf.addPage([EXPORT_W, EXPORT_H], 'landscape')
         pdf.addImage(img, 'JPEG', 0, 0, EXPORT_W, EXPORT_H)
       }
+      if (!pdf) throw new Error('Nenhum slide pôde ser capturado')
       pdf.save(exportFileName(proposal))
     } catch (err) {
       alert('Não consegui gerar o PDF agora. Tente de novo em alguns segundos.')
@@ -225,12 +288,12 @@ export default function Presenter() {
       <div className="flex h-full">
         {sidebarOpen && (
           <SlideSidebar
-            slides={slides}
+            slides={isPublic ? visibleSlides : slides}
             currentId={slide?.id}
             hiddenIds={hiddenIds}
             onJump={jumpToId}
-            onToggleHidden={toggleHidden}
-            onReorder={reorder}
+            onToggleHidden={isPublic ? null : toggleHidden}
+            onReorder={isPublic ? null : reorder}
             onClose={() => setSidebarOpen(false)}
           />
         )}
@@ -245,10 +308,19 @@ export default function Presenter() {
               {!sidebarOpen && (
                 <button onClick={(e) => { e.stopPropagation(); setSidebarOpen(true) }} className="text-xs bg-black/30 hover:bg-black/50 backdrop-blur px-3 py-1.5 rounded-full transition">☰ Slides</button>
               )}
-              <button onClick={(e) => { e.stopPropagation(); navigate(`/proposta/${id}/editar`) }} className="text-xs bg-black/30 hover:bg-black/50 backdrop-blur px-3 py-1.5 rounded-full transition">← Sair</button>
+              {!isPublic && (
+                <button onClick={(e) => { e.stopPropagation(); navigate(`/proposta/${id}/editar`) }} className="text-xs bg-black/30 hover:bg-black/50 backdrop-blur px-3 py-1.5 rounded-full transition">← Sair</button>
+              )}
             </div>
             <div className="flex items-center gap-2 pointer-events-auto">
-              <button onClick={(e) => { e.stopPropagation(); setEditing((v) => !v) }} className="text-xs bg-black/30 hover:bg-black/50 backdrop-blur px-3 py-1.5 rounded-full transition">{editing ? 'Fechar edição' : '✎ Editar slide'}</button>
+              {!isPublic && (
+                <>
+                  <button onClick={(e) => { e.stopPropagation(); setEditing((v) => !v) }} className="text-xs bg-black/30 hover:bg-black/50 backdrop-blur px-3 py-1.5 rounded-full transition">{editing ? 'Fechar edição' : '✎ Editar slide'}</button>
+                  <button onClick={(e) => { e.stopPropagation(); handleCopyLink() }} className="text-xs bg-black/30 hover:bg-black/50 backdrop-blur px-3 py-1.5 rounded-full transition">
+                    {linkCopied ? 'Link copiado ✓' : '🔗 Link para o cliente'}
+                  </button>
+                </>
+              )}
               <button disabled={exporting} onClick={(e) => { e.stopPropagation(); handleExportPdf() }} className="text-xs bg-black/30 hover:bg-black/50 backdrop-blur px-3 py-1.5 rounded-full transition disabled:opacity-50">
                 {exporting ? `Gerando PDF… ${exportProgress}/${visibleSlides.length}` : '⇩ Baixar PDF'}
               </button>
@@ -274,6 +346,7 @@ export default function Presenter() {
               onSave={(patch, scope) => { scope === 'global' ? saveGlobalContent(slide.id, patch) : saveOverridePerProposal(slide.id, patch) }}
               onSaveVideoScope={(scope, patch) => saveVideoByScope(scope, patch)}
               onSaveFields={saveFieldsPatch}
+              onSaveVisibility={saveVisibilityPatch}
               onClose={() => setEditing(false)}
             />
           )}
@@ -284,7 +357,7 @@ export default function Presenter() {
       <div style={{ position: 'fixed', left: -99999, top: 0, width: EXPORT_W, height: EXPORT_H, overflow: 'hidden' }}>
         <div ref={exportRef} style={{ width: EXPORT_W, height: EXPORT_H }}>
           {exporting && visibleSlides[exportIndex] && (
-            <SlideView slide={visibleSlides[exportIndex]} c1={c1} c2={c2} c3={c3} revealCount={999} settings={settings} />
+            <SlideView slide={visibleSlides[exportIndex]} c1={c1} c2={c2} c3={c3} revealCount={999} settings={settings} exportMode />
           )}
         </div>
       </div>
@@ -353,6 +426,7 @@ const RATIO_CSS = { '1:1': '1 / 1', '4:5': '4 / 5', '5:4': '5 / 4', '9:16': '9 /
 
 function SlideSidebar({ slides, currentId, hiddenIds, onJump, onToggleHidden, onReorder, onClose }) {
   const dragFrom = useRef(null)
+  const canManage = !!onReorder
 
   return (
     <div className="w-56 shrink-0 bg-[#1c232b] border-r border-white/10 flex flex-col">
@@ -366,12 +440,12 @@ function SlideSidebar({ slides, currentId, hiddenIds, onJump, onToggleHidden, on
           return (
             <div
               key={s.id}
-              draggable
+              draggable={canManage}
               onDragStart={() => (dragFrom.current = i)}
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={() => { if (dragFrom.current !== null && dragFrom.current !== i) onReorder(dragFrom.current, i); dragFrom.current = null }}
+              onDragOver={(e) => canManage && e.preventDefault()}
+              onDrop={() => { if (canManage && dragFrom.current !== null && dragFrom.current !== i) onReorder(dragFrom.current, i); dragFrom.current = null }}
               className={`mx-2 mb-1 px-2.5 py-2 rounded-lg flex items-center gap-2 text-xs transition ${s.id === currentId ? 'bg-white/15 text-white' : hidden ? 'text-white/30' : 'text-white/60 hover:bg-white/5'}`}
-              title="Arraste para reordenar"
+              title={canManage ? 'Arraste para reordenar' : undefined}
             >
               <span className="text-white/30 text-[10px] w-4 text-center shrink-0">{i + 1}</span>
               <span
@@ -381,11 +455,13 @@ function SlideSidebar({ slides, currentId, hiddenIds, onJump, onToggleHidden, on
                 <span>{SLIDE_ICONS[s.type] || '•'}</span>
                 <span className="truncate">{s.title || slideFallbackLabel(s)}</span>
               </span>
-              <button
-                onClick={(e) => { e.stopPropagation(); onToggleHidden(s.id) }}
-                className="shrink-0 text-white/40 hover:text-white text-xs"
-                title={hidden ? 'Mostrar esta página' : 'Ocultar esta página'}
-              >{hidden ? '🚫' : '👁'}</button>
+              {onToggleHidden && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onToggleHidden(s.id) }}
+                  className="shrink-0 text-white/40 hover:text-white text-xs"
+                  title={hidden ? 'Mostrar esta página' : 'Ocultar esta página'}
+                >{hidden ? '🚫' : '👁'}</button>
+              )}
             </div>
           )
         })}
@@ -395,7 +471,14 @@ function SlideSidebar({ slides, currentId, hiddenIds, onJump, onToggleHidden, on
 }
 
 function ColorSwatchRow({ palette, value, onChange }) {
-  const options = [...palette, ...FIXED_SWATCHES.map((s) => s.hex)]
+  // remove duplicatas (ex: quando a própria paleta já tem o mesmo bege das cores fixas)
+  const seen = new Set()
+  const options = [...palette, ...FIXED_SWATCHES.map((s) => s.hex)].filter((hex) => {
+    const key = hex.toUpperCase()
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
   return (
     <div className="flex gap-2 flex-wrap mb-1">
       {options.map((hex, i) => (
@@ -460,7 +543,7 @@ function ImagePositionPicker({ image, onChange }) {
 
 const COLOR_CUSTOMIZABLE_TYPES = new Set(['divider', 'agenda', 'profile', 'clientRequest', 'reasons', 'scopeSection', 'modeling', 'journeyFlow', 'stages', 'feedbacks', 'pricingCalc', 'packagePricing', 'custom', 'closing'])
 
-function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALETTE, proposal, onSaveVideoScope, onSaveFields }) {
+function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALETTE, proposal, onSaveVideoScope, onSaveFields, onSaveVisibility }) {
   // padrão é "todas as propostas" apenas quando essa opção existe pro tipo de slide (allowGlobal);
   // do contrário, o escopo é sempre "só esta proposta" — bug crítico corrigido aqui: antes disso,
   // slides sem a opção de escopo (título, imagens, vídeo…) tentavam salvar como "global" por engano
@@ -487,6 +570,8 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
   const [imageLayout, setImageLayout] = useState(slide.imageLayout || 'row')
   const [adjustingIdx, setAdjustingIdx] = useState(null)
   const hasSingleImage = 'image' in slide && !isMultiImage && slide.type !== 'cover'
+  const isCover = slide.type === 'cover'
+  const [coverImage, setCoverImage] = useState(slide.image || '')
   const [singleImage, setSingleImage] = useState(slide.image || '')
   const [noImage, setNoImage] = useState(!!slide.noImage)
   const [imagePosition, setImagePosition] = useState(slide.imagePosition || 'left')
@@ -514,6 +599,7 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
     setSingleImage(slide.image || '')
     setNoImage(!!slide.noImage)
     setImagePosition(slide.imagePosition || 'left')
+    setCoverImage(slide.image || '')
     setDescricaoProjeto(slide.descricaoProjeto || '')
     setStages(slide.stages ? JSON.parse(JSON.stringify(slide.stages)) : [])
     setFootnote(slide.footnote || '')
@@ -538,6 +624,7 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
     if (COLOR_CUSTOMIZABLE_TYPES.has(slide.type)) { patch.bgColor = bgColor; patch.textColor = textColor }
     if (isMultiImage) { patch.images = images; patch.imageLayout = imageLayout; patch.image = null; patch.image2 = null; patch.description = description }
     if (hasSingleImage) { patch.image = singleImage; patch.noImage = noImage; patch.imagePosition = imagePosition }
+    if (isCover) { patch.image = coverImage }
     if (isClientRequest) { onSaveFields?.({ descricaoProjeto }) }
     if (isStages) { patch.stages = stages; patch.footnote = footnote }
     if (isReasons) { patch.items = reasonsList }
@@ -577,6 +664,22 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
       <label className="text-xs font-medium text-ink/70 block mb-1">Título</label>
       <input value={title} onChange={(e) => setTitle(e.target.value)} className="w-full text-sm p-2.5 rounded-lg border border-line outline-none focus:border-clay mb-4" />
 
+      {isCover && (
+        <div className="mb-4">
+          <label className="text-xs font-medium text-ink/70 block mb-1">Imagem de fundo da capa</label>
+          {coverImage && <img src={coverImage} className="w-full h-28 object-cover rounded-lg mb-2" alt="" />}
+          <label className="text-xs cursor-pointer text-clay font-medium">
+            {coverImage ? 'Trocar imagem' : '+ adicionar imagem'}
+            <input type="file" accept="image/*" hidden onChange={(e) => {
+              const file = e.target.files[0]; if (!file) return
+              const reader = new FileReader()
+              reader.onload = () => setCoverImage(reader.result)
+              reader.readAsDataURL(file)
+            }} />
+          </label>
+        </div>
+      )}
+
       {isClientRequest && (
         <>
           <label className="text-xs font-medium text-ink/70 block mb-1">Descrição do projeto</label>
@@ -601,6 +704,24 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
           <ColorSwatchRow palette={palette} value={textColor} onChange={setTextColor} />
           <p className="text-[11px] text-muted mb-4 mt-1">Se a combinação escolhida ficar difícil de ler, o sistema ajusta automaticamente para garantir contraste.</p>
         </>
+      )}
+
+      {slide.type === 'packagePricing' && (
+        <div className="mb-4">
+          <label className="text-xs font-medium text-ink/70 block mb-1">Formas de pagamento a mostrar (só nesta proposta)</label>
+          {[['cartao', 'Cartão de crédito (12x)'], ['prazo', 'Parcelado por prazo de projeto'], ['avista', 'À vista (com desconto)'], ['metade', 'Metade / Metade']].map(([id, label]) => {
+            const checked = proposal?.visibility?.payments?.[id] !== false
+            return (
+              <label key={id} className="flex items-center gap-2 text-sm mb-1.5 cursor-pointer">
+                <input
+                  type="checkbox" checked={checked}
+                  onChange={() => onSaveVisibility?.({ payments: { [id]: !checked } })}
+                />
+                {label}
+              </label>
+            )
+          })}
+        </div>
       )}
 
       {slide.type === 'journeyFlow' && (
@@ -952,7 +1073,7 @@ function slideColors(slide, fallbackBg) {
   return { bg, heading }
 }
 
-function SlideView({ slide, c1, c2, c3, revealCount, settings }) {
+function SlideView({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
   const t2 = readableTextColor(c2)
   // se a cor de destaque (c1) não tiver contraste suficiente sobre o fundo (c2),
   // usamos automaticamente a cor de texto legível no lugar — nunca mais texto "sumindo"
@@ -1145,23 +1266,23 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings }) {
       return (
         <div className="w-full h-full p-10 md:p-16 overflow-auto" style={{ background: bg }}>
           <h2 className="text-2xl md:text-3xl mb-8" style={{ ...titleStyle, color: heading }}>{slide.title}</h2>
-          <Reveal i={0} revealCount={revealCount} className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6 max-w-3xl">
-            <div className="p-6 bg-white border border-line" style={{ borderRadius: radius }}>
-              <div className="text-xs uppercase tracking-wide opacity-60 mb-1" style={{ color: heading }}>Valor do pacote</div>
-              <div className="text-2xl font-semibold" style={{ color: c1, fontFamily: STYLE.displayFont }}>{slide.value}</div>
+          <Reveal i={0} revealCount={revealCount} className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-6 max-w-4xl">
+            <div className="p-7 bg-white border border-line" style={{ borderRadius: radius }}>
+              <div className="text-sm uppercase tracking-wide opacity-60 mb-2" style={{ color: heading }}>Valor do pacote</div>
+              <div className="text-3xl font-semibold" style={{ color: c1, fontFamily: STYLE.displayFont }}>{slide.value}</div>
             </div>
             {slide.schedule.length > 0 && (
-              <div className="p-6 bg-white border border-line" style={{ borderRadius: radius }}>
-                <div className="text-xs uppercase tracking-wide opacity-60 mb-1" style={{ color: heading }}>Prazo do projeto</div>
-                <div className="text-sm" style={{ color: heading, opacity: 0.8 }}>{slide.schedule.join(' · ')}</div>
+              <div className="p-7 bg-white border border-line" style={{ borderRadius: radius }}>
+                <div className="text-sm uppercase tracking-wide opacity-60 mb-2" style={{ color: heading }}>Prazo do projeto</div>
+                <div className="text-base" style={{ color: heading, opacity: 0.8 }}>{slide.schedule.join(' · ')}</div>
               </div>
             )}
           </Reveal>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-3xl">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-4xl">
             {slide.paymentCards.map((p, i) => (
               <Reveal
                 key={p.id} i={i + 1} revealCount={revealCount}
-                className="p-5 text-left"
+                className="p-7 text-left"
                 style={{
                   borderRadius: radius,
                   background: p.highlight ? c2 : 'white',
@@ -1170,9 +1291,9 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings }) {
                   boxShadow: p.highlight ? '0 8px 24px rgba(0,0,0,0.12)' : 'none',
                 }}
               >
-                <div className="text-xs uppercase tracking-wide opacity-70 mb-1">{p.label}{p.highlight ? ' ★' : ''}</div>
-                <div className="text-xl font-semibold mb-1" style={{ color: p.highlight ? c1OnC2 : c1, fontFamily: STYLE.displayFont }}>{p.value}</div>
-                {p.detail && <div className="text-xs opacity-70">{p.detail}</div>}
+                <div className="text-sm uppercase tracking-wide opacity-70 mb-2">{p.label}{p.highlight ? ' ★' : ''}</div>
+                <div className="text-2xl md:text-3xl font-semibold mb-2" style={{ color: p.highlight ? c1OnC2 : c1, fontFamily: STYLE.displayFont }}>{p.value}</div>
+                {p.detail && <div className="text-sm opacity-70">{p.detail}</div>}
               </Reveal>
             ))}
           </div>
@@ -1184,12 +1305,20 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings }) {
       return (
         <div className="w-full h-full bg-ink flex items-center justify-center p-10 relative">
           {slide.title && (
-            <div className="absolute top-5 left-6 md:top-7 md:left-8 text-white/85 text-sm md:text-base font-medium tracking-wide z-10">{slide.title}</div>
+            <div className="absolute top-6 left-6 right-6 md:top-8 md:left-10 md:right-10 text-white text-lg md:text-2xl font-bold tracking-wide z-10" style={{ fontFamily: STYLE.displayFont }}>{slide.title}</div>
           )}
+          <div className="w-full h-full flex items-center justify-center pt-16 md:pt-20">
           {slide.videoUrl ? (
             <video src={slide.videoUrl} controls className="max-w-full max-h-full" style={{ borderRadius: STYLE.radius }} />
           ) : slide.embedUrl ? (
-            <iframe src={slide.embedUrl} className="w-full h-full" style={{ borderRadius: STYLE.radius }} allowFullScreen allow="autoplay; encrypted-media; picture-in-picture" title="video" />
+            exportMode ? (
+              <div className="text-white/60 text-center px-10">
+                <div className="text-4xl mb-3">▶</div>
+                <div>Assista ao vídeo na apresentação online (este PDF não reproduz vídeos).</div>
+              </div>
+            ) : (
+              <iframe src={slide.embedUrl} className="w-full h-full" style={{ borderRadius: STYLE.radius }} allowFullScreen allow="autoplay; encrypted-media; picture-in-picture" title="video" />
+            )
           ) : (
             <div className="text-white/50 text-center">
               <div className="text-4xl mb-3">▶</div>
@@ -1197,6 +1326,7 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings }) {
               <div className="text-sm mt-1">Clique em "✎ Editar slide" para enviar um vídeo.</div>
             </div>
           )}
+          </div>
         </div>
       )
 
@@ -1212,7 +1342,11 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings }) {
           </div>
           <div className="order-1 md:order-2 relative">
             {slide.embedUrl ? (
-              <iframe src={slide.embedUrl} className="w-full h-full" allowFullScreen allow="autoplay; encrypted-media; picture-in-picture" title="video" />
+              exportMode ? (
+                <div className="w-full h-full flex items-center justify-center bg-ink text-white/60 text-center px-6 text-sm">Assista ao vídeo na apresentação online</div>
+              ) : (
+                <iframe src={slide.embedUrl} className="w-full h-full" allowFullScreen allow="autoplay; encrypted-media; picture-in-picture" title="video" />
+              )
             ) : slide.videoUrl ? (
               <video src={slide.videoUrl} controls className="w-full h-full object-cover" />
             ) : (

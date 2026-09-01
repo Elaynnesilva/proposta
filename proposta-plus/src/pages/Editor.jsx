@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { getProposal, saveProposal, getSettings, addSavedSwatch, addSavedPalette, removeSavedPalette } from '../lib/db'
-import { toEmbedUrl, parseMoneyBR, money } from '../lib/fields'
+import { toEmbedUrl, parseMoneyBR } from '../lib/fields'
 import DataTable from '../components/DataTable'
 import ColorWheelPicker from '../components/ColorWheelPicker'
 import { DEFAULT_PALETTE } from '../lib/templates'
@@ -47,8 +47,9 @@ export default function Editor() {
   if (!proposal) return <div className="p-10 text-muted">Carregando…</div>
 
   return (
-    <div className="max-w-5xl mx-auto">
-      <div className="sticky top-0 z-10 px-6 md:px-10 pt-6 md:pt-8 pb-4 mb-6" style={{ background: '#EFE6D5', borderBottom: '1px solid #E4D9C3' }}>
+    <>
+      <div className="w-full px-6 md:px-10 pt-6 md:pt-8 pb-4 mb-6" style={{ background: '#EFE6D5', borderBottom: '1px solid #E4D9C3' }}>
+        <div className="max-w-5xl mx-auto">
         <div className="flex items-center justify-between mb-3 flex-wrap gap-3">
           <div>
             <button onClick={() => navigate('/')} className="text-xs text-muted hover:text-ink mb-1">← Voltar às propostas</button>
@@ -97,9 +98,10 @@ export default function Editor() {
             </div>
           )}
         </div>
+        </div>
       </div>
 
-      <div className="px-6 md:px-10 pb-10">
+      <div className="max-w-5xl mx-auto px-6 md:px-10 pb-10">
 
       <div className="flex gap-1 mb-8 border-b border-line overflow-x-auto">
         {TABS.map((t) => (
@@ -115,7 +117,7 @@ export default function Editor() {
       {tab === 'precos' && <PricingVisibilityTab proposal={proposal} onChange={persist} />}
       {tab === 'slides' && <CustomSlidesTab proposal={proposal} onChange={persist} />}
       </div>
-    </div>
+    </>
   )
 }
 
@@ -158,18 +160,21 @@ function StatusRow({ proposal, onChange }) {
 
       {status === 'aceita' && (
         <div className="mt-3 p-3 bg-white/70 border border-line rounded-lg max-w-lg">
-          <div className="text-xs text-muted mb-2">Qual pacote o cliente escolheu?</div>
-          <div className="flex gap-2 flex-wrap mb-3">
-            {PACKAGE_LIST.map((pkg) => (
-              <button
-                key={pkg.id}
-                onClick={() => choosePackage(pkg)}
-                className={`text-xs px-3 py-1.5 rounded-full border ${proposal.acceptedPackageId === pkg.id ? 'bg-ink text-white border-ink' : 'border-line text-ink/70 hover:bg-sand'}`}
-              >{pkg.label}</button>
-            ))}
+          <div className="flex items-center gap-2 flex-wrap">
+            <label className="text-xs text-muted shrink-0">Pacote escolhido:</label>
+            <select
+              value={proposal.acceptedPackageId || ''}
+              onChange={(e) => e.target.value && choosePackage(PACKAGE_LIST.find((p) => p.id === e.target.value))}
+              className="text-sm p-1.5 rounded-lg border border-line outline-none focus:border-clay bg-white"
+            >
+              <option value="" disabled>Selecione…</option>
+              {PACKAGE_LIST.map((pkg) => (
+                <option key={pkg.id} value={pkg.id}>{pkg.label}</option>
+              ))}
+            </select>
           </div>
           {proposal.acceptedPackageId && (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 mt-2">
               <label className="text-xs text-muted">Valor fechado:</label>
               <input
                 type="number" step="0.01"
@@ -177,10 +182,8 @@ function StatusRow({ proposal, onChange }) {
                 onChange={(e) => onChange({ acceptedValue: e.target.value === '' ? null : Number(e.target.value) })}
                 className="text-sm p-1.5 rounded-lg border border-line outline-none focus:border-clay w-40"
               />
-              <span className="text-xs text-muted">{proposal.acceptedValue != null ? money(proposal.acceptedValue) : ''}</span>
             </div>
           )}
-          <p className="text-[11px] text-muted mt-2">Pode editar o valor se tiver dado algum desconto na negociação.</p>
         </div>
       )}
     </div>

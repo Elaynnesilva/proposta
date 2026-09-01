@@ -32,6 +32,7 @@ export default function App() {
   if (!user) {
     return (
       <Routes>
+        <Route path="/ver/:uid/:id" element={<Presenter />} />
         <Route path="*" element={<Login onAuth={setUser} />} />
       </Routes>
     )
@@ -40,6 +41,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/proposta/:id/apresentar" element={<Presenter />} />
+      <Route path="/ver/:uid/:id" element={<Presenter />} />
       <Route
         path="*"
         element={
