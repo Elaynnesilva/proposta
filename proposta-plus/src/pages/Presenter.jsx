@@ -1564,6 +1564,16 @@ function slideColors(slide, fallbackBg, c1) {
   return { bg, heading, titleColor }
 }
 
+/**
+ * ATENÇÃO — daqui pra baixo é o DESENHO DO SLIDE, e ele nunca deve usar classe responsiva
+ * do Tailwind (md:, sm:, lg:). O motivo: o slide é sempre renderizado no canvas fixo de
+ * 1600x900 e só encolhido visualmente pelo ScaledCanvas. Mas as classes md:/sm: olham para a
+ * largura da JANELA, não do canvas — então, no celular, o slide continuava com 1600px de
+ * largura mas se remontava no formato "de celular": as colunas viravam uma embaixo da outra
+ * (pacotes e resumo dos pacotes ficavam completamente diferentes do computador) e a coluna
+ * da imagem, marcada como "hidden md:block", simplesmente sumia (a foto aparecia na edição
+ * do slide mas não aparecia no slide). Aqui dentro use sempre o valor de computador direto.
+ */
 function SlideView({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
   const t2 = readableTextColor(c2)
   // se a cor de destaque (c1) não tiver contraste suficiente sobre o fundo (c2),
@@ -1578,14 +1588,14 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
           <SlideImage src={slide.image} className="absolute inset-0 w-full h-full" />
           <div className="absolute inset-0" style={{ background: 'linear-gradient(0deg, rgba(0,0,0,0.8) 10%, rgba(0,0,0,0.15) 60%, rgba(0,0,0,0.4) 100%)' }} />
           {settings?.logoDataUrl && (
-            <img src={settings.logoDataUrl} alt="logo" className="absolute z-10 top-6 left-6 md:top-10 md:left-10 h-12 md:h-16 object-contain" />
+            <img src={settings.logoDataUrl} alt="logo" className="absolute z-10 top-10 left-10 h-16 object-contain" />
           )}
-          <div className="relative z-10 p-10 md:p-20 max-w-3xl">
+          <div className="relative z-10 p-20 max-w-3xl">
             <div className="text-xs tracking-[0.2em] uppercase mb-4" style={{ color: c1 }}>{slide.kicker}</div>
-            <h1 className="text-3xl md:text-5xl mb-6 text-white" style={titleStyle}>{slide.title}</h1>
+            <h1 className="text-5xl mb-6 text-white" style={titleStyle}>{slide.title}</h1>
             {/* sem animação na capa, a pedido — o texto aparece pronto, junto com o slide */}
             {slide.items.map((it, i) => (
-              <p key={i} className="text-base md:text-lg text-white/85 mb-2 max-w-xl">{it}</p>
+              <p key={i} className="text-lg text-white/85 mb-2 max-w-xl">{it}</p>
             ))}
           </div>
         </div>
@@ -1595,7 +1605,7 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
       const { bg, heading, titleColor } = slideColors(slide, c2, c1)
       return (
         <div className="w-full h-full flex flex-col items-center justify-center text-center px-10" style={{ background: bg }}>
-          <h2 className="text-2xl md:text-4xl max-w-3xl" style={{ ...titleStyle, color: titleColor }}>{slide.title}</h2>
+          <h2 className="text-4xl max-w-3xl" style={{ ...titleStyle, color: titleColor }}>{slide.title}</h2>
           {slide.subtitle && <p className="mt-5 max-w-xl" style={{ color: heading, opacity: 0.75 }}>{slide.subtitle}</p>}
         </div>
       )
@@ -1605,7 +1615,7 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
       const { bg, heading, titleColor } = slideColors(slide, SAND, c1)
       return (
         <SplitLayout image={slide.image} radius={radius} noImage={slide.noImage} imagePosition={slide.imagePosition} bg={bg}>
-          <h2 className="text-2xl md:text-3xl mb-8" style={{ ...titleStyle, color: titleColor }}>{slide.title}</h2>
+          <h2 className="text-3xl mb-8" style={{ ...titleStyle, color: titleColor }}>{slide.title}</h2>
           <ol className="space-y-3">
             {slide.items.map((it, i) => (
               <Reveal key={i} i={i} revealCount={revealCount} className="flex gap-3 text-lg" style={{ color: heading }}>
@@ -1625,7 +1635,7 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
           {/* sem div extra aqui — o próprio SplitLayout já centraliza e dimensiona o bloco de
               texto; um wrapper "max-w-md mx-auto" aninhado por dentro dele competia com essa
               centralização e podia empurrar o texto pro canto errado */}
-          <h2 className="auto-left-item text-2xl md:text-3xl mb-6" style={{ ...titleStyle, color: titleColor }}>{slide.title}</h2>
+          <h2 className="auto-left-item text-3xl mb-6" style={{ ...titleStyle, color: titleColor }}>{slide.title}</h2>
           {/* todos os textos aparecem juntos, vindos da esquerda, sem precisar clicar */}
           {slide.items.map((it, i) => (
             <p key={i} className="auto-left-item whitespace-pre-line mb-4 leading-relaxed" style={{ color: heading, opacity: 0.85 }}>{it}</p>
@@ -1638,7 +1648,7 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
       const { bg, heading, titleColor } = slideColors(slide, SAND, c1)
       return (
         <SplitLayout image={slide.image} radius={radius} noImage={slide.noImage} imagePosition={slide.imagePosition} bg={bg}>
-          <h2 className="text-xl md:text-2xl mb-8" style={{ ...titleStyle, color: titleColor }}>{slide.title}</h2>
+          <h2 className="text-2xl mb-8" style={{ ...titleStyle, color: titleColor }}>{slide.title}</h2>
           <div className="space-y-4">
             {slide.rows.map(([label, value], i) => (
               <Reveal key={i} i={i} revealCount={revealCount}>
@@ -1665,7 +1675,7 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
       const { bg, heading, titleColor } = slideColors(slide, SAND, c1)
       return (
         <SplitLayout image={slide.image} radius={radius} imageRight noImage={slide.noImage} imagePosition={slide.imagePosition} bg={bg}>
-          <h2 className="text-xl md:text-2xl mb-6" style={{ ...titleStyle, color: titleColor }}>{slide.title}</h2>
+          <h2 className="text-2xl mb-6" style={{ ...titleStyle, color: titleColor }}>{slide.title}</h2>
           <div className="space-y-4">
             {slide.items.map((r, i) => (
               <Reveal key={i} i={i} revealCount={revealCount}>
@@ -1690,9 +1700,9 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
     case 'stages': {
       const { bg, heading, titleColor } = slideColors(slide, SAND, c1)
       return (
-        <div className="w-full h-full p-10 md:p-16 overflow-auto" style={{ background: bg }}>
-          <h2 className="text-2xl md:text-3xl mb-8" style={{ ...titleStyle, color: titleColor }}>{slide.title}</h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="w-full h-full p-16 overflow-auto" style={{ background: bg }}>
+          <h2 className="text-3xl mb-8" style={{ ...titleStyle, color: titleColor }}>{slide.title}</h2>
+          <div className="grid grid-cols-3 gap-4">
             {slide.stages.map((s, i) => (
               <Reveal key={i} i={i} revealCount={revealCount} className="bg-white border border-line p-5 flex flex-col" style={{ borderRadius: radius }}>
                 <div className="font-semibold mb-3 text-lg" style={{ color: c1 }}>{i + 1}. {s.title}</div>
@@ -1709,9 +1719,9 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
     case 'feedbacks': {
       const { bg, heading, titleColor } = slideColors(slide, INK, c1)
       return (
-        <div className="w-full h-full p-10 md:p-16 flex flex-col justify-center" style={{ background: bg }}>
-          <h2 className="text-2xl md:text-4xl mb-10" style={{ ...titleStyle, color: titleColor }}>{slide.title}</h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="w-full h-full p-16 flex flex-col justify-center" style={{ background: bg }}>
+          <h2 className="text-4xl mb-10" style={{ ...titleStyle, color: titleColor }}>{slide.title}</h2>
+          <div className="grid grid-cols-3 gap-4">
             {slide.items.map((fb, i) => (
               <Reveal key={i} i={i} revealCount={revealCount} className="overflow-hidden" style={{ borderRadius: radius, background: heading === '#FFFFFF' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)' }}>
                 {fb.printUrl ? (
@@ -1735,8 +1745,8 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
     case 'pricingCalc': {
       const { bg, heading, titleColor } = slideColors(slide, SAND, c1)
       return (
-        <div className="w-full h-full p-10 md:p-16 overflow-auto flex flex-col" style={{ background: bg }}>
-          <h2 className="text-xl md:text-2xl mb-6" style={{ ...titleStyle, color: titleColor }}>{slide.title}</h2>
+        <div className="w-full h-full p-16 overflow-auto flex flex-col" style={{ background: bg }}>
+          <h2 className="text-2xl mb-6" style={{ ...titleStyle, color: titleColor }}>{slide.title}</h2>
           {/* os tópicos aparecem juntos, sem precisar clicar */}
           <ul className="space-y-2 max-w-2xl mb-8">
             {slide.items.map((it, i) => (
@@ -1757,9 +1767,9 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
     case 'packagesSummary': {
       const { bg, heading, titleColor } = slideColors(slide, SAND, c1)
       return (
-        <div className="w-full h-full p-8 md:p-12 overflow-auto" style={{ background: bg }}>
-          <h2 className="text-2xl md:text-3xl mb-10 text-center" style={{ ...titleStyle, color: titleColor }}>{slide.title}</h2>
-          <div className={`grid grid-cols-1 ${slide.packages.length === 2 ? 'md:grid-cols-2' : 'md:grid-cols-3'} gap-5`}>
+        <div className="w-full h-full p-12 overflow-auto" style={{ background: bg }}>
+          <h2 className="text-3xl mb-10 text-center" style={{ ...titleStyle, color: titleColor }}>{slide.title}</h2>
+          <div className={`grid ${slide.packages.length === 2 ? 'grid-cols-2' : 'grid-cols-3'} gap-5`}>
             {slide.packages.map((pkg, i) => {
               const extra = slide.packageExtras?.[pkg.id]
               return (
@@ -1793,10 +1803,10 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
       const { bg, heading, titleColor } = slideColors(slide, SAND, c1)
       const hasBenefits = slide.benefits && slide.benefits.length > 0
       return (
-        <div className="w-full h-full grid grid-cols-1 md:grid-cols-2">
+        <div className="w-full h-full grid grid-cols-2">
           {/* metade esquerda: título + benefícios do pacote — aparecem juntos, sem precisar clicar */}
-          <div className="p-8 md:p-12 flex flex-col justify-center overflow-auto" style={{ background: bg }}>
-            <h2 className="text-2xl md:text-3xl mb-6" style={{ ...titleStyle, color: titleColor }}>{slide.title}</h2>
+          <div className="p-12 flex flex-col justify-center overflow-auto" style={{ background: bg }}>
+            <h2 className="text-3xl mb-6" style={{ ...titleStyle, color: titleColor }}>{slide.title}</h2>
             {hasBenefits && (
               <>
                 <div className="text-sm font-medium uppercase tracking-wide mb-3" style={{ color: heading, opacity: 0.6 }}>Benefícios do pacote</div>
@@ -1812,8 +1822,8 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
           </div>
 
           {/* metade direita: valor, prazo e formas de pagamento — só aparecem depois, ao clicar */}
-          <div className="p-8 md:p-12 overflow-auto bg-white flex flex-col justify-center">
-            <Reveal i={0} revealCount={revealCount} className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
+          <div className="p-12 overflow-auto bg-white flex flex-col justify-center">
+            <Reveal i={0} revealCount={revealCount} className="grid grid-cols-2 gap-4 mb-5">
               <div className="p-5 border border-line" style={{ borderRadius: radius }}>
                 <div className="text-xs uppercase tracking-wide opacity-60 mb-1" style={{ color: '#28313C' }}>Valor do pacote</div>
                 <div className="text-2xl font-semibold" style={{ color: c1, fontFamily: STYLE.displayFont }}>{slide.value}</div>
@@ -1825,7 +1835,7 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
                 </div>
               )}
             </Reveal>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 gap-4">
               {slide.paymentCards.map((p, i) => (
                 <Reveal
                   key={p.id} i={i + 1} revealCount={revealCount}
@@ -1853,9 +1863,9 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
       return (
         <div className="w-full h-full bg-ink flex items-center justify-center p-10 relative">
           {slide.title && (
-            <div className="absolute top-6 left-6 right-6 md:top-8 md:left-10 md:right-10 text-white text-lg md:text-2xl font-bold tracking-wide z-10" style={{ fontFamily: STYLE.displayFont }}>{slide.title}</div>
+            <div className="absolute top-8 left-10 right-10 text-white text-2xl font-bold tracking-wide z-10" style={{ fontFamily: STYLE.displayFont }}>{slide.title}</div>
           )}
-          <div className="w-full h-full flex items-center justify-center pt-16 md:pt-20">
+          <div className="w-full h-full flex items-center justify-center pt-20">
           {slide.videoUrl ? (
             <video src={slide.videoUrl} controls className="max-w-full max-h-full" style={{ borderRadius: STYLE.radius }} />
           ) : slide.embedUrl ? (
@@ -1881,14 +1891,14 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
     case 'custom': {
       const { bg, heading, titleColor } = slideColors(slide, SAND, c1)
       return (
-        <div className="w-full h-full grid grid-cols-1 md:grid-cols-2" style={{ background: bg }}>
-          <div className="p-10 md:p-16 flex flex-col justify-center order-2 md:order-1">
-            <h2 className="text-2xl md:text-3xl mb-6" style={{ ...titleStyle, color: titleColor }}>{slide.title}</h2>
+        <div className="w-full h-full grid grid-cols-2" style={{ background: bg }}>
+          <div className="p-16 flex flex-col justify-center order-1">
+            <h2 className="text-3xl mb-6" style={{ ...titleStyle, color: titleColor }}>{slide.title}</h2>
             {(slide.items || [slide.body]).filter(Boolean).map((it, i) => (
               <Reveal key={i} i={i} revealCount={revealCount} className="mb-3 whitespace-pre-line" style={{ color: heading, opacity: 0.85 }}>{it}</Reveal>
             ))}
           </div>
-          <div className="order-1 md:order-2 relative">
+          <div className="order-2 relative">
             {slide.embedUrl ? (
               exportMode ? (
                 <div className="w-full h-full flex items-center justify-center bg-ink text-white/60 text-center px-6 text-sm">Assista ao vídeo na apresentação online</div>
@@ -1910,8 +1920,8 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
       const quoteColor = slide.textColor && !isLowContrast(slide.textColor, bg) ? slide.textColor : c1OnC2
       return (
         <div className="w-full h-full flex flex-col items-center justify-center text-center px-10" style={{ background: bg }}>
-          <h2 className="text-xl md:text-2xl mb-6" style={{ ...titleStyle, color: titleColor, opacity: 0.9 }}>{slide.headline}</h2>
-          <p className="text-xl md:text-2xl italic max-w-2xl" style={{ color: quoteColor, fontFamily: STYLE.displayFont }}>&ldquo;{slide.quote}&rdquo;</p>
+          <h2 className="text-2xl mb-6" style={{ ...titleStyle, color: titleColor, opacity: 0.9 }}>{slide.headline}</h2>
+          <p className="text-2xl italic max-w-2xl" style={{ color: quoteColor, fontFamily: STYLE.displayFont }}>&ldquo;{slide.quote}&rdquo;</p>
           {slide.author && <p className="text-sm mt-4 tracking-wide" style={{ color: heading, opacity: 0.6 }}>{slide.author}</p>}
         </div>
       )
@@ -1926,8 +1936,8 @@ function JourneyFlowSlide({ slide, c1, c2, t2, revealCount, radius }) {
   const stepImages = slide.stepImages || []
   const { bg, heading, titleColor } = slideColors(slide, SAND, c1)
   return (
-    <div className="w-full h-full p-8 md:p-14 overflow-auto" style={{ background: bg }}>
-      <h2 className="text-2xl md:text-4xl mb-2" style={{ ...titleStyle, color: titleColor }}>{slide.title}</h2>
+    <div className="w-full h-full p-14 overflow-auto" style={{ background: bg }}>
+      <h2 className="text-4xl mb-2" style={{ ...titleStyle, color: titleColor }}>{slide.title}</h2>
       <p className="text-sm mb-8" style={{ color: heading, opacity: 0.6 }}>{slide.subtitle}</p>
       <div className="flex flex-wrap gap-x-3 gap-y-4">
         {slide.items.map((it, i) => (
@@ -1940,7 +1950,7 @@ function JourneyFlowSlide({ slide, c1, c2, t2, revealCount, radius }) {
               <div className="text-base leading-snug mb-2">{it}</div>
               {stepImages[i] && <img src={stepImages[i]} alt="" className="w-full h-20 object-cover rounded-md" />}
             </div>
-            {i < slide.items.length - 1 && <div className="hidden md:block text-2xl" style={{ color: c1 }}>→</div>}
+            {i < slide.items.length - 1 && <div className="block text-2xl" style={{ color: c1 }}>→</div>}
           </Reveal>
         ))}
       </div>
@@ -1965,7 +1975,9 @@ function PriceTag({ label, value, radius, c1, big }) {
 /**
  * Layout de duas colunas usado em vários slides. Se noImage, o texto ocupa a página toda,
  * justificado à esquerda, em duas colunas (mais fácil de ler do que uma coluna estreita).
- * imagePosition escolhe se a imagem fica à esquerda ou à direita (some no celular de qualquer forma).
+ * imagePosition escolhe se a imagem fica à esquerda ou à direita. O slide é sempre desenhado no
+ * canvas fixo 1600x900 (ver ScaledCanvas), então NÃO se usa classe responsiva (md:, sm:...) aqui
+ * dentro: o celular mostra exatamente o mesmo desenho do computador, só reduzido.
  */
 function SplitLayout({ image, radius, imageRight = false, imagePosition, noImage, bg, children }) {
   if (noImage) {
@@ -1973,7 +1985,7 @@ function SplitLayout({ image, radius, imageRight = false, imagePosition, noImage
     // verticalmente centralizado para não colar no topo em slides com pouco conteúdo
     return (
       <div className="w-full h-full overflow-auto flex items-center" style={{ background: bg || SAND }}>
-        <div className="p-10 md:p-16 max-w-2xl">{children}</div>
+        <div className="p-16 max-w-2xl">{children}</div>
       </div>
     )
   }
@@ -1984,14 +1996,14 @@ function SplitLayout({ image, radius, imageRight = false, imagePosition, noImage
   // espaço de largura pro texto — bios/textos longos (como em "Sobre mim") quebram em menos
   // linhas e ficam mais baixos, evitando cortar o final do texto no PDF (altura fixa).
   const text = (
-    <div className="p-10 md:p-14 flex flex-col justify-center items-center overflow-auto" style={{ background: bg || SAND }}>
+    <div className="p-14 flex flex-col justify-center items-center overflow-auto" style={{ background: bg || SAND }}>
       <div className="max-w-lg w-full text-left">{children}</div>
     </div>
   )
   const img = <SlideImage src={image} className="w-full h-full" />
   return (
-    <div className="w-full h-full grid grid-cols-1 md:grid-cols-2">
-      {onRight ? (<>{text}<div className="hidden md:block" style={{ background: bg || SAND }}>{img}</div></>) : (<><div className="hidden md:block" style={{ background: bg || SAND }}>{img}</div>{text}</>)}
+    <div className="w-full h-full grid grid-cols-2">
+      {onRight ? (<>{text}<div className="block" style={{ background: bg || SAND }}>{img}</div></>) : (<><div className="block" style={{ background: bg || SAND }}>{img}</div>{text}</>)}
     </div>
   )
 }
@@ -2015,7 +2027,7 @@ function TopicImageSlide({ slide, c1, revealCount, radius }) {
 
   return (
     <div
-      className="w-full h-full p-8 md:p-14 overflow-hidden"
+      className="w-full h-full p-14 overflow-hidden"
       style={{
         background: bg,
         display: 'grid',
@@ -2025,7 +2037,7 @@ function TopicImageSlide({ slide, c1, revealCount, radius }) {
     >
       <div>
         <h2
-          className={`text-2xl md:text-3xl ${hasImages ? 'text-center' : 'text-left'}`}
+          className={`text-3xl ${hasImages ? 'text-center' : 'text-left'}`}
           style={{ ...titleStyle, color: titleColor }}
         >
           {slide.title}
