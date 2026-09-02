@@ -71,7 +71,11 @@ export default function Presenter() {
         if (historyRef.current.length > 50) historyRef.current.shift()
         futureRef.current = []
         setHistoryVersion((v) => v + 1)
-        saveProposal(next).then(() => resolve(next))
+        // grava no Firestore uma cópia com as fotos trocadas por referências curtas (pra nunca
+        // estourar o limite de 1MB por documento) — mas o estado local (a variável "next", que
+        // é o que aparece na tela) continua com a foto de verdade, então ela aparece na hora,
+        // sem precisar recarregar a página
+        replaceDataUrls(next, next.id).then((toSave) => saveProposal(toSave)).then(() => resolve(next))
         return next
       })
     })
@@ -82,7 +86,7 @@ export default function Presenter() {
     setProposal((prev) => {
       const previous = historyRef.current.pop()
       futureRef.current.push(prev)
-      saveProposal(previous)
+      replaceDataUrls(previous, previous.id).then((toSave) => saveProposal(toSave))
       setHistoryVersion((v) => v + 1)
       return previous
     })
@@ -93,7 +97,7 @@ export default function Presenter() {
     setProposal((prev) => {
       const nextState = futureRef.current.pop()
       historyRef.current.push(prev)
-      saveProposal(nextState)
+      replaceDataUrls(nextState, nextState.id).then((toSave) => saveProposal(toSave))
       setHistoryVersion((v) => v + 1)
       return nextState
     })
@@ -754,6 +758,10 @@ function resizeImageFile(file, maxDim = 1400, quality = 0.75) {
     })
   }
   if (!file.type?.startsWith('image/') || file.type === 'image/svg+xml') return fallbackToDataUrl()
+  // PNG, WebP e GIF podem ter fundo transparente — nesses casos exporta como PNG (preserva a
+  // transparência) em vez de JPEG (que sempre pinta um fundo sólido por baixo, apagando a
+  // transparência pra sempre). Fotos comuns (JPEG) continuam virando JPEG, bem mais leve.
+  const preserveAlpha = file.type === 'image/png' || file.type === 'image/webp' || file.type === 'image/gif'
   return new Promise((resolve) => {
     const img = new Image()
     const url = URL.createObjectURL(file)
@@ -770,7 +778,7 @@ function resizeImageFile(file, maxDim = 1400, quality = 0.75) {
       const ctx = canvas.getContext('2d')
       ctx.drawImage(img, 0, 0, width, height)
       cleanup()
-      resolve(canvas.toDataURL('image/jpeg', quality))
+      resolve(preserveAlpha ? canvas.toDataURL('image/png') : canvas.toDataURL('image/jpeg', quality))
     }
     img.onerror = () => { cleanup(); fallbackToDataUrl().then(resolve) }
     img.src = url
@@ -907,7 +915,7 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
     })
   }
 
-  async function save() {
+  function save() {
     if (isVideo) {
       onSaveVideoScope?.(videoScope, { videoUrl: '', videoPath: '', embedUrl: toEmbedUrl(embedUrl) })
       onClose()
@@ -923,51 +931,40 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
     // (campo Descrição do acompanhamento de obra) — editar aqui atualiza esse campo, então
     // não fica um texto "preso" só nesta proposta, desalinhado do resto dos dados
     if (slide.id === 'obra') { onSaveFields?.({ acompanhamentoObraDescricao: description }) }
-
-    // antes de gravar, troca toda foto (base64) por uma referência curta a um documento
-    // separado — é isso que evita a proposta estourar o limite de 1MB do Firestore. Só agora,
-    // no momento de salvar, é que a(s) foto(s) de fato viajam pro banco.
-    setUploadingCount((n) => n + 1)
-    try {
-      if (isPackagesSummary) {
-        const savedExtras = await replaceDataUrls(packageExtras, proposal.id)
-        onSave({ packageExtras: savedExtras }, 'proposal')
-        // os tópicos editados aqui são os mesmos campos "Benefícios do pacote" usados nos
-        // cards de cada pacote — salvar aqui atualiza os dois lugares de uma vez
-        const beneficiosPatch = {}
-        Object.entries(packageBenefits).forEach(([pkgId, text]) => {
-          beneficiosPatch[`beneficios${pkgId.charAt(0).toUpperCase()}${pkgId.slice(1)}`] = text
-        })
-        onSaveFields?.(beneficiosPatch)
-      }
-      if (isStages) { patch.stages = await replaceDataUrls(stages, proposal.id); patch.footnote = footnote }
-      if (isReasons) { patch.items = reasonsList }
-      if (isFeedbacks) { patch.items = await replaceDataUrls(feedbacks, proposal.id) }
-
-      // imagens SEMPRE são salvas só nesta proposta, mesmo quando o resto do slide está marcado
-      // como "todas as propostas" — o conteúdo compartilhado não tem onde guardar imagem por
-      // slide, e salvar como "global" fazia a imagem se perder silenciosamente. Essa era a causa
-      // do "às vezes funciona, às vezes não" ao trocar imagem/posição em Sobre mim, Motivos, Agenda e Jornada.
-      const imagePatch = {}
-      let hasImagePatch = false
-      if (isMultiImage) {
-        Object.assign(imagePatch, { images: await replaceDataUrls(images, proposal.id), imageLayout, image: null, image2: null })
-        // a "Acompanhamento de obra" usa a descrição vinda de "Dados do projeto" (ver acima) —
-        // não duplica aqui como override, senão o texto do campo nunca mais apareceria
-        if (slide.id !== 'obra') imagePatch.description = description
-        hasImagePatch = true
-      }
-      if (hasSingleImage) { Object.assign(imagePatch, { image: await replaceDataUrls(singleImage, proposal.id), noImage, imagePosition }); hasImagePatch = true }
-      if (isCover) { Object.assign(imagePatch, { image: await replaceDataUrls(coverImage, proposal.id) }); hasImagePatch = true }
-      if (slide.type === 'journeyFlow') { Object.assign(imagePatch, { stepImages: await replaceDataUrls(stepImages, proposal.id) }); hasImagePatch = true }
-      if (hasImagePatch) onSave(imagePatch, 'proposal')
-    } catch (err) {
-      console.error(err)
-      alert('Não consegui salvar uma das imagens agora. Tente de novo em alguns segundos.')
-      setUploadingCount((n) => Math.max(0, n - 1))
-      return
+    if (isPackagesSummary) {
+      onSave({ packageExtras }, 'proposal')
+      // os tópicos editados aqui são os mesmos campos "Benefícios do pacote" usados nos
+      // cards de cada pacote — salvar aqui atualiza os dois lugares de uma vez
+      const beneficiosPatch = {}
+      Object.entries(packageBenefits).forEach(([pkgId, text]) => {
+        beneficiosPatch[`beneficios${pkgId.charAt(0).toUpperCase()}${pkgId.slice(1)}`] = text
+      })
+      onSaveFields?.(beneficiosPatch)
     }
-    setUploadingCount((n) => Math.max(0, n - 1))
+    if (isStages) { patch.stages = stages; patch.footnote = footnote }
+    if (isReasons) { patch.items = reasonsList }
+    if (isFeedbacks) { patch.items = feedbacks }
+
+    // imagens SEMPRE são salvas só nesta proposta, mesmo quando o resto do slide está marcado
+    // como "todas as propostas" — o conteúdo compartilhado não tem onde guardar imagem por
+    // slide, e salvar como "global" fazia a imagem se perder silenciosamente. Essa era a causa
+    // do "às vezes funciona, às vezes não" ao trocar imagem/posição em Sobre mim, Motivos, Agenda e Jornada.
+    // As fotos aqui continuam em base64 (pra aparecer na tela na hora, sem esperar recarregar);
+    // é o updateProposal (lá em cima, no componente Presenter) que troca por uma referência
+    // curta antes de gravar no Firestore — o estado local sempre mantém a foto de verdade.
+    const imagePatch = {}
+    let hasImagePatch = false
+    if (isMultiImage) {
+      Object.assign(imagePatch, { images, imageLayout, image: null, image2: null })
+      // a "Acompanhamento de obra" usa a descrição vinda de "Dados do projeto" (ver acima) —
+      // não duplica aqui como override, senão o texto do campo nunca mais apareceria
+      if (slide.id !== 'obra') imagePatch.description = description
+      hasImagePatch = true
+    }
+    if (hasSingleImage) { Object.assign(imagePatch, { image: singleImage, noImage, imagePosition }); hasImagePatch = true }
+    if (isCover) { Object.assign(imagePatch, { image: coverImage }); hasImagePatch = true }
+    if (slide.type === 'journeyFlow') { Object.assign(imagePatch, { stepImages }); hasImagePatch = true }
+    if (hasImagePatch) onSave(imagePatch, 'proposal')
 
     // cor de fundo/texto SEMPRE é salva só nesta proposta, pelo mesmo motivo das imagens: o
     // conteúdo compartilhado (Configurações > Textos padrão) não tem onde guardar cor por
