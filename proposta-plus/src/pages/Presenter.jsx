@@ -52,6 +52,53 @@ export default function Presenter() {
   const exportRef = useRef(null)
   const mobileSlideRef = useRef(null)
 
+  // desfazer/refazer: guarda um histórico de versões anteriores da proposta (textos, imagens,
+  // cores, ordem, visibilidade — tudo que passa por updateProposal). historyVersion só existe
+  // pra forçar o React a re-renderizar os botões (habilitado/desabilitado) quando o histórico muda.
+  const historyRef = useRef([])
+  const futureRef = useRef([])
+  const [historyVersion, setHistoryVersion] = useState(0)
+
+  /** Todas as edições da proposta (textos, imagens, cores, ordem, ocultar slide, campos,
+   *  visibilidade de preços) devem passar por aqui em vez de setProposal direto, pra entrarem
+   *  no histórico de desfazer/refazer e serem salvas de forma consistente. */
+  function updateProposal(updater) {
+    return new Promise((resolve) => {
+      setProposal((prev) => {
+        const next = typeof updater === 'function' ? updater(prev) : updater
+        if (next === prev) { resolve(prev); return prev }
+        historyRef.current.push(prev)
+        if (historyRef.current.length > 50) historyRef.current.shift()
+        futureRef.current = []
+        setHistoryVersion((v) => v + 1)
+        saveProposal(next).then(() => resolve(next))
+        return next
+      })
+    })
+  }
+
+  function undo() {
+    if (!historyRef.current.length) return
+    setProposal((prev) => {
+      const previous = historyRef.current.pop()
+      futureRef.current.push(prev)
+      saveProposal(previous)
+      setHistoryVersion((v) => v + 1)
+      return previous
+    })
+  }
+
+  function redo() {
+    if (!futureRef.current.length) return
+    setProposal((prev) => {
+      const nextState = futureRef.current.pop()
+      historyRef.current.push(prev)
+      saveProposal(nextState)
+      setHistoryVersion((v) => v + 1)
+      return nextState
+    })
+  }
+
   // tela cheia no mobile: usa a Fullscreen API de verdade (esconde a barra do navegador) e
   // tenta travar a orientação em paisagem — se o navegador não permitir (iOS Safari não tem
   // Fullscreen API em elementos comuns), cai num modo "tela cheia" só via CSS mesmo assim,
@@ -131,6 +178,17 @@ export default function Presenter() {
   const hiddenIds = useMemo(() => new Set(proposal?.hiddenSlides || []), [proposal?.hiddenSlides])
   const visibleSlides = useMemo(() => slides.filter((s) => !hiddenIds.has(s.id)), [slides, hiddenIds])
 
+  // sempre que a lista de slides visíveis muda de tamanho (ao ocultar um slide, reordenar, etc.)
+  // garante que o índice atual continua dentro dos limites — sem isso, ocultar o slide que
+  // estava sendo mostrado (ou o último da lista) deixava "slide" undefined e a apresentação
+  // aparecia cortada/quebrada até trocar de página manualmente
+  useEffect(() => {
+    setIndex((i) => {
+      if (visibleSlides.length === 0) return 0
+      return Math.min(i, visibleSlides.length - 1)
+    })
+  }, [visibleSlides.length])
+
   const slide = visibleSlides[index]
   const palette = proposal?.palette || DEFAULT_PALETTE
   const [c1, c2, c3] = palette
@@ -165,26 +223,18 @@ export default function Presenter() {
   }
 
   function reorder(fromIdx, toIdx) {
-    setProposal((prev) => {
+    updateProposal((prev) => {
       const ids = slides.map((s) => s.id)
       const [moved] = ids.splice(fromIdx, 1)
       ids.splice(toIdx, 0, moved)
-      const next = { ...prev, slideOrder: ids }
-      saveProposal(next)
-      return next
+      return { ...prev, slideOrder: ids }
     })
   }
 
-  // IMPORTANTE: as funções abaixo usam a forma funcional do setProposal (prev => ...) em vez de
-  // ler a variável "proposal" direto. Isso evita perder uma edição quando duas mudanças acontecem
-  // em sequência rápida (ex: mudar a posição da imagem e salvar de novo logo em seguida) — antes,
-  // a segunda edição podia silenciosamente "esquecer" a primeira.
   function saveOverridePerProposal(slideId, patch) {
-    setProposal((prev) => {
+    updateProposal((prev) => {
       const overrides = { ...(prev.slideOverrides || {}), [slideId]: { ...(prev.slideOverrides?.[slideId] || {}), ...patch } }
-      const next = { ...prev, slideOverrides: overrides }
-      saveProposal(next)
-      return next
+      return { ...prev, slideOverrides: overrides }
     })
   }
 
@@ -203,19 +253,13 @@ export default function Presenter() {
   /** Atualiza campos de "Dados do projeto" direto pelo slide (ex: Objetivo do projeto),
    *  garantindo que fique sincronizado com a aba "Dados do projeto" do editor. */
   async function saveFieldsPatch(patch) {
-    return new Promise((resolve) => {
-      setProposal((prev) => {
-        const next = { ...prev, fields: { ...(prev.fields || {}), ...patch } }
-        saveProposal(next).then(resolve)
-        return next
-      })
-    })
+    return updateProposal((prev) => ({ ...prev, fields: { ...(prev.fields || {}), ...patch } }))
   }
 
   /** Atualiza a visibilidade de pacotes/formas de pagamento (mesmo dado da aba "Preços a mostrar" do editor).
    *  Quando packageId é informado, a mudança vale só para aquele pacote. */
   function saveVisibilityPatch(patch, packageId) {
-    setProposal((prev) => {
+    updateProposal((prev) => {
       let visibility = { ...(prev.visibility || {}) }
       if (packageId && patch.payments) {
         visibility = {
@@ -228,9 +272,7 @@ export default function Presenter() {
       } else {
         visibility = { ...visibility, ...patch, payments: { ...(visibility.payments || {}), ...(patch.payments || {}) } }
       }
-      const next = { ...prev, visibility }
-      saveProposal(next)
-      return next
+      return { ...prev, visibility }
     })
   }
 
@@ -257,13 +299,10 @@ export default function Presenter() {
   }
 
   function toggleHidden(slideId) {
-    setProposal((prev) => {
+    updateProposal((prev) => {
       const hidden = new Set(prev.hiddenSlides || [])
       hidden.has(slideId) ? hidden.delete(slideId) : hidden.add(slideId)
-      const next = { ...prev, hiddenSlides: [...hidden] }
-      saveProposal(next)
-      if (hidden.has(slideId)) setIndex((i) => Math.max(0, Math.min(i, visibleSlides.length - 2)))
-      return next
+      return { ...prev, hiddenSlides: [...hidden] }
     })
   }
 
@@ -339,9 +378,9 @@ export default function Presenter() {
           className={isFullscreen ? 'relative shrink-0 bg-ink w-full h-full' : 'relative shrink-0 bg-ink'}
           style={isFullscreen ? {} : { height: '38vh', minHeight: 220 }}
         >
-          <div className="absolute inset-0 cursor-pointer" onClick={handleAdvance}>
+          <ScaledCanvas onClick={handleAdvance}>
             <SlideView slide={slide} c1={c1} c2={c2} c3={c3} revealCount={revealCount} settings={settings} />
-          </div>
+          </ScaledCanvas>
           <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5 pointer-events-none">
             {visibleSlides.map((s, i) => (
               <div key={s.id} className="h-1.5 rounded-full transition-all" style={{ width: i === index ? 22 : 6, background: i === index ? c1 : 'rgba(255,255,255,0.35)' }} />
@@ -371,6 +410,12 @@ export default function Presenter() {
                 <button onClick={handleCopyLink} className="text-xs bg-white/10 px-3 py-1.5 rounded-full shrink-0">🔗 {linkCopied ? 'Copiado ✓' : 'Link'}</button>
               )}
               <button disabled={exporting} onClick={handleExportPdf} className="text-xs bg-white/10 px-3 py-1.5 rounded-full shrink-0 disabled:opacity-50">⇩ {exporting ? `Gerando… ${exportProgress}/${visibleSlides.length}` : 'Baixar PDF'}</button>
+              {!isPublic && (
+                <div className="flex items-center gap-1 shrink-0 ml-auto">
+                  <button disabled={!historyRef.current.length} onClick={undo} className="text-xs bg-white/10 disabled:opacity-30 w-8 h-8 rounded-full flex items-center justify-center" title="Desfazer">↩</button>
+                  <button disabled={!futureRef.current.length} onClick={redo} className="text-xs bg-white/10 disabled:opacity-30 w-8 h-8 rounded-full flex items-center justify-center" title="Refazer">↪</button>
+                </div>
+              )}
             </div>
 
             <div className="flex-1 min-h-0 overflow-y-auto bg-[#1c232b]">
@@ -418,9 +463,9 @@ export default function Presenter() {
         )}
 
         <div className="relative flex-1 min-w-0">
-          <div className="absolute inset-0 cursor-pointer" onClick={handleAdvance}>
+          <ScaledCanvas onClick={handleAdvance}>
             <SlideView slide={slide} c1={c1} c2={c2} c3={c3} revealCount={revealCount} settings={settings} />
-          </div>
+          </ScaledCanvas>
 
           <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-2 sm:px-4 py-2 sm:py-3 pointer-events-none gap-1 sm:gap-2">
             <div className="flex items-center gap-1 sm:gap-2 pointer-events-auto">
@@ -443,6 +488,12 @@ export default function Presenter() {
               <button disabled={exporting} onClick={(e) => { e.stopPropagation(); handleExportPdf() }} className="text-xs bg-black/30 hover:bg-black/50 backdrop-blur px-2.5 sm:px-3 py-1.5 rounded-full transition disabled:opacity-50 shrink-0">
                 ⇩<span className="hidden sm:inline"> {exporting ? `Gerando PDF… ${exportProgress}/${visibleSlides.length}` : 'Baixar PDF'}</span>
               </button>
+              {!isPublic && (
+                <>
+                  <button disabled={!historyRef.current.length} onClick={(e) => { e.stopPropagation(); undo() }} className="text-xs bg-black/30 hover:bg-black/50 backdrop-blur disabled:opacity-30 w-8 h-8 rounded-full flex items-center justify-center shrink-0" title="Desfazer">↩</button>
+                  <button disabled={!futureRef.current.length} onClick={(e) => { e.stopPropagation(); redo() }} className="text-xs bg-black/30 hover:bg-black/50 backdrop-blur disabled:opacity-30 w-8 h-8 rounded-full flex items-center justify-center shrink-0" title="Refazer">↪</button>
+                </>
+              )}
               <div className="text-xs bg-black/30 backdrop-blur px-2.5 sm:px-3 py-1.5 rounded-full shrink-0">{index + 1}/{visibleSlides.length}</div>
             </div>
           </div>
@@ -767,9 +818,8 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
 
     const patch = slide.type === 'closing' ? { title, quote, author } : { title }
     if (items) patch.items = items
-    if (slide.type === 'divider') { patch.subtitle = subtitle; patch.bgColor = bgColor; patch.textColor = textColor }
+    if (slide.type === 'divider') { patch.subtitle = subtitle }
     if (slide.type === 'journeyFlow') { patch.subtitle = subtitle }
-    if (COLOR_CUSTOMIZABLE_TYPES.has(slide.type)) { patch.bgColor = bgColor; patch.textColor = textColor }
     if (isClientRequest) { onSaveFields?.({ objetivoProjeto }) }
     if (isPackagesSummary) {
       onSave({ packageExtras }, 'proposal')
@@ -796,6 +846,15 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
     if (isCover) { Object.assign(imagePatch, { image: coverImage }); hasImagePatch = true }
     if (slide.type === 'journeyFlow') { Object.assign(imagePatch, { stepImages }); hasImagePatch = true }
     if (hasImagePatch) onSave(imagePatch, 'proposal')
+
+    // cor de fundo/texto SEMPRE é salva só nesta proposta, pelo mesmo motivo das imagens: o
+    // conteúdo compartilhado (Configurações > Textos padrão) não tem onde guardar cor por
+    // slide, então salvar como "global" fazia a cor se perder silenciosamente — essa era a
+    // causa de não conseguir mudar cor em Agenda, Sobre mim, Motivos, Apresentações,
+    // Feedbacks e Encerramento (os slides com a opção "todas as propostas").
+    if (COLOR_CUSTOMIZABLE_TYPES.has(slide.type)) {
+      onSave({ bgColor, textColor }, 'proposal')
+    }
 
     onSave(patch, scope)
     onClose()
@@ -1264,6 +1323,43 @@ function Reveal({ i, revealCount, children, className = '', style }) {
   return <div className={`reveal-item ${i < revealCount ? 'revealed' : ''} ${className}`} style={{ transitionDelay: `${i * 60}ms`, ...style }}>{children}</div>
 }
 
+/**
+ * Renderiza o slide sempre no tamanho "real" (o mesmo canvas 1600×900 usado no PDF) e
+ * encolhe/aumenta ele visualmente (CSS transform: scale) pra caber no espaço disponível —
+ * em vez de deixar o slide "reformatar" o conteúdo pra cada largura de tela. Isso garante
+ * que a experiência no celular (inclusive no link do cliente) seja pixel-a-pixel igual à do
+ * computador, só em tamanho menor — e ao girar o celular pra paisagem, o espaço disponível
+ * aumenta e a escala aumenta junto, sem esquisitices de layout responsivo quebrando slide.
+ */
+function ScaledCanvas({ children, onClick }) {
+  const outerRef = useRef(null)
+  const [box, setBox] = useState({ scale: 1, left: 0, top: 0 })
+
+  useEffect(() => {
+    const el = outerRef.current
+    if (!el) return
+    function recompute() {
+      const { width, height } = el.getBoundingClientRect()
+      if (!width || !height) return
+      const scale = Math.min(width / EXPORT_W, height / EXPORT_H)
+      setBox({ scale, left: (width - EXPORT_W * scale) / 2, top: (height - EXPORT_H * scale) / 2 })
+    }
+    recompute()
+    const ro = new ResizeObserver(recompute)
+    ro.observe(el)
+    window.addEventListener('orientationchange', recompute)
+    return () => { ro.disconnect(); window.removeEventListener('orientationchange', recompute) }
+  }, [])
+
+  return (
+    <div ref={outerRef} className="absolute inset-0 cursor-pointer overflow-hidden" onClick={onClick} style={{ background: INK }}>
+      <div style={{ position: 'absolute', left: box.left, top: box.top, width: EXPORT_W, height: EXPORT_H, transform: `scale(${box.scale})`, transformOrigin: 'top left' }}>
+        {children}
+      </div>
+    </div>
+  )
+}
+
 function SlideImage({ src, className, style }) {
   if (!src) return <div className={className} style={{ background: '#DDD6C8', ...style }} />
   return <img src={src} alt="" crossOrigin="anonymous" className={`object-cover ${className}`} style={style} />
@@ -1729,11 +1825,14 @@ function SplitLayout({ image, radius, imageRight = false, imagePosition, noImage
     )
   }
   const onRight = imagePosition ? imagePosition === 'right' : imageRight
-  // o bloco de texto fica centralizado verticalmente na sua metade da página, mas encostado
-  // à esquerda (não centralizado horizontalmente) — "centralizado à esquerda"
+  // o bloco de texto fica centralizado (na horizontal e na vertical) dentro da sua metade da
+  // página — mas o texto continua justificado à esquerda dentro do bloco (parágrafos com
+  // início alinhado, não centro-a-centro linha a linha). max-w-lg (em vez de md) dá mais
+  // espaço de largura pro texto — bios/textos longos (como em "Sobre mim") quebram em menos
+  // linhas e ficam mais baixos, evitando cortar o final do texto no PDF (altura fixa).
   const text = (
-    <div className="p-10 md:p-16 flex flex-col justify-center items-start overflow-auto" style={{ background: bg || SAND }}>
-      <div className="max-w-md w-full">{children}</div>
+    <div className="p-10 md:p-14 flex flex-col justify-center items-center overflow-auto" style={{ background: bg || SAND }}>
+      <div className="max-w-lg w-full text-left">{children}</div>
     </div>
   )
   const img = <SlideImage src={image} className="w-full h-full" />
@@ -1804,26 +1903,25 @@ function TopicImageSlide({ slide, c1, revealCount, radius }) {
       {hasImages && (
         <div className="min-h-0 flex items-center justify-center">
           <div
-            className="grid gap-4 place-items-center w-full h-full"
+            className="grid gap-4 w-full h-full"
             style={(() => {
               const n = imgs.length
               // "lado a lado" é sempre uma única fileira; "grade" nunca passa de 3 fotos por
               // fileira (3 em cima, 3 embaixo, etc.), como pedido — assim nunca fica apertado
               const cols = layout === 'row' ? n : Math.min(n, 3)
               const rows = Math.ceil(n / cols)
-              return { gridTemplateColumns: `repeat(${cols}, 1fr)`, gridTemplateRows: `repeat(${rows}, 1fr)` }
+              return { gridTemplateColumns: `repeat(${cols}, 1fr)`, gridTemplateRows: `repeat(${rows}, 1fr)`, alignItems: 'center' }
             })()}
           >
             {imgs.map((img, i) => (
               <div
                 key={i}
-                className="relative overflow-hidden bg-[#DDD6C8]"
-                // altura 100% (definida pela célula do grid) + aspect-ratio calcula a largura a
-                // partir dela — isso é o que faz o formato (1:1, 4:5, 16:9...) ser respeitado de
-                // forma confiável; antes, com largura E altura em "auto", o formato podia não
-                // fazer efeito nenhum (a caixa colapsava, já que a foto em si é posicionada como
-                // absolute e não "empurra" o tamanho do elemento pai)
-                style={{ borderRadius: radius, aspectRatio: RATIO_CSS[img.ratio] || '1 / 1', height: '100%', maxWidth: '100%' }}
+                className="relative overflow-hidden bg-[#DDD6C8] w-full"
+                // largura 100% da coluna do grid (valor definido) + aspect-ratio calcula a
+                // altura A PARTIR dela — assim o formato (1:1, 4:5, 16:9...) é respeitado de
+                // verdade. Antes a altura vinha primeiro e a largura ficava sobrando ou
+                // faltando espaço, distorcendo o formato escolhido (ex: 16:9 saía quase quadrado).
+                style={{ borderRadius: radius, aspectRatio: RATIO_CSS[img.ratio] || '1 / 1', maxHeight: '100%' }}
               >
                 <Reveal i={i} revealCount={revealCount} className="absolute inset-0">
                   <SlideImage src={img.url} className="w-full h-full" style={{ objectPosition: `${img.posX ?? 50}% ${img.posY ?? 50}%` }} />
