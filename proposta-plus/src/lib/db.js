@@ -202,6 +202,30 @@ export async function deleteVideo(path) {
   try { await deleteObject(ref(storage, path)) } catch { /* já pode ter sido removido — ignora */ }
 }
 
+/* ---------------- IMAGENS (Firebase Storage — mesmo motivo do vídeo: o Firestore tem limite
+ * de 1MB por documento. Fotos guardadas direto no texto (base64) enchiam esse limite rápido
+ * quando a proposta tinha várias fotos, e a gravação falhava silenciosamente — as últimas fotos
+ * adicionadas simplesmente não ficavam salvas, e por isso sumiam ao abrir a proposta em outro
+ * aparelho. Agora a foto vai pro Storage e só a URL (bem curta) fica no documento.) ---------------- */
+
+export function uploadImage(file, onProgress) {
+  const uid = requireUid()
+  const path = `users/${uid}/images/${Date.now()}-${file.name.replace(/[^\w.\-]/g, '_')}`
+  const storageRef = ref(storage, path)
+  const task = uploadBytesResumable(storageRef, file)
+  return new Promise((resolve, reject) => {
+    task.on(
+      'state_changed',
+      (snap) => onProgress?.(Math.round((snap.bytesTransferred / snap.totalBytes) * 100)),
+      (err) => reject(err),
+      async () => {
+        const url = await getDownloadURL(task.snapshot.ref)
+        resolve({ url, path })
+      }
+    )
+  })
+}
+
 /* ---------------- CONFIGURAÇÕES DA EMPRESA ---------------- */
 
 export async function getSettings() {

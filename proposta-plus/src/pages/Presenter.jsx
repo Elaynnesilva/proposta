@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { getProposal, getSettings, getTemplateContent, saveProposal, saveTemplateContent, getPublicProposal, getPublicSettings, getPublicTemplateContent, setProposalPublic } from '../lib/db'
+import { getProposal, getSettings, getTemplateContent, saveProposal, saveTemplateContent, getPublicProposal, getPublicSettings, getPublicTemplateContent, setProposalPublic, uploadImage } from '../lib/db'
 import { auth } from '../lib/firebase'
 import { buildSlides } from '../lib/slides'
 import { DEFAULT_IMAGES, DEFAULT_SHARED_TEXT } from '../lib/content'
@@ -161,7 +161,13 @@ export default function Presenter() {
   const slides = useMemo(() => {
     let list = baseSlides.map((s) => {
       const ov = proposal?.slideOverrides?.[s.id]
-      return ov ? { ...s, ...ov } : s
+      if (!ov) return s
+      const merged = { ...s, ...ov }
+      // a descrição do "Acompanhamento de obra" vem sempre de "Dados do projeto" — nunca de um
+      // override salvo por engano numa versão antiga, senão um texto desatualizado ficaria
+      // "preso" ali pra sempre, escondendo qualquer atualização feita depois nos dados do projeto
+      if (s.id === 'obra') merged.description = s.description
+      return merged
     })
     const order = proposal?.slideOrder
     if (order && order.length) {
@@ -764,6 +770,22 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
   }, {}))
   const isVideo = slide.type === 'video'
   const [embedUrl, setEmbedUrl] = useState(slide.embedUrl || '')
+  const [uploadingCount, setUploadingCount] = useState(0)
+
+  /** Envia a foto pro Firebase Storage (em vez de guardar em base64 direto no documento —
+   *  isso é o que evitava a proposta "encher" o limite de 1MB do Firestore e fotos sumirem
+   *  silenciosamente ao salvar). Chama onDone(url) quando terminar. */
+  function handleImageFile(file, onDone) {
+    if (!file) return
+    setUploadingCount((n) => n + 1)
+    uploadImage(file)
+      .then(({ url }) => onDone(url))
+      .catch((err) => {
+        console.error(err)
+        alert('Não consegui enviar essa imagem agora. Tente de novo em alguns segundos.')
+      })
+      .finally(() => setUploadingCount((n) => Math.max(0, n - 1)))
+  }
   const [videoScope, setVideoScope] = useState('proposal')
 
   useEffect(() => {
@@ -803,9 +825,7 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
   function addImages(fileList) {
     const files = Array.from(fileList || [])
     files.forEach((file) => {
-      const reader = new FileReader()
-      reader.onload = () => setImages((prev) => [...prev, { url: reader.result, ratio: '' }])
-      reader.readAsDataURL(file)
+      handleImageFile(file, (url) => setImages((prev) => [...prev, { url, ratio: '' }]))
     })
   }
 
@@ -821,6 +841,10 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
     if (slide.type === 'divider') { patch.subtitle = subtitle }
     if (slide.type === 'journeyFlow') { patch.subtitle = subtitle }
     if (isClientRequest) { onSaveFields?.({ objetivoProjeto }) }
+    // a página de "Acompanhamento de obra" busca a descrição direto de "Dados do projeto"
+    // (campo Descrição do acompanhamento de obra) — editar aqui atualiza esse campo, então
+    // não fica um texto "preso" só nesta proposta, desalinhado do resto dos dados
+    if (slide.id === 'obra') { onSaveFields?.({ acompanhamentoObraDescricao: description }) }
     if (isPackagesSummary) {
       onSave({ packageExtras }, 'proposal')
       // os tópicos editados aqui são os mesmos campos "Benefícios do pacote" usados nos
@@ -841,7 +865,13 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
     // do "às vezes funciona, às vezes não" ao trocar imagem/posição em Sobre mim, Motivos, Agenda e Jornada.
     const imagePatch = {}
     let hasImagePatch = false
-    if (isMultiImage) { Object.assign(imagePatch, { images, imageLayout, image: null, image2: null, description }); hasImagePatch = true }
+    if (isMultiImage) {
+      Object.assign(imagePatch, { images, imageLayout, image: null, image2: null })
+      // a "Acompanhamento de obra" usa a descrição vinda de "Dados do projeto" (ver acima) —
+      // não duplica aqui como override, senão o texto do campo nunca mais apareceria
+      if (slide.id !== 'obra') imagePatch.description = description
+      hasImagePatch = true
+    }
     if (hasSingleImage) { Object.assign(imagePatch, { image: singleImage, noImage, imagePosition }); hasImagePatch = true }
     if (isCover) { Object.assign(imagePatch, { image: coverImage }); hasImagePatch = true }
     if (slide.type === 'journeyFlow') { Object.assign(imagePatch, { stepImages }); hasImagePatch = true }
@@ -894,9 +924,7 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
             {coverImage ? 'Trocar imagem' : '+ adicionar imagem'}
             <input type="file" accept="image/*" hidden onChange={(e) => {
               const file = e.target.files[0]; if (!file) return
-              const reader = new FileReader()
-              reader.onload = () => setCoverImage(reader.result)
-              reader.readAsDataURL(file)
+              handleImageFile(file, setCoverImage)
             }} />
           </label>
         </div>
@@ -920,9 +948,7 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
                   {extra.image ? 'Trocar imagem (5:4)' : '+ adicionar imagem (5:4)'}
                   <input type="file" accept="image/*" hidden onChange={(e) => {
                     const file = e.target.files[0]; if (!file) return
-                    const reader = new FileReader()
-                    reader.onload = () => setPackageExtras((prev) => ({ ...prev, [pkg.id]: { ...prev[pkg.id], image: reader.result } }))
-                    reader.readAsDataURL(file)
+                    handleImageFile(file, (url) => setPackageExtras((prev) => ({ ...prev, [pkg.id]: { ...prev[pkg.id], image: url } })))
                   }} />
                 </label>
                 <label className="text-xs font-medium text-ink/70 block mb-1">O que está incluso neste pacote (um tópico por linha)</label>
@@ -1119,9 +1145,7 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
                   {s.image ? 'Trocar imagem' : '+ adicionar imagem'}
                   <input type="file" accept="image/*" hidden onChange={(e) => {
                     const file = e.target.files[0]; if (!file) return
-                    const reader = new FileReader()
-                    reader.onload = () => setStages((prev) => prev.map((p, pi) => pi === i ? { ...p, image: reader.result } : p))
-                    reader.readAsDataURL(file)
+                    handleImageFile(file, (url) => setStages((prev) => prev.map((p, pi) => pi === i ? { ...p, image: url } : p)))
                   }} />
                 </label>
                 {s.image && (
@@ -1164,9 +1188,7 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
                     foto do cliente
                     <input type="file" accept="image/*" hidden onChange={(e) => {
                       const file = e.target.files[0]; if (!file) return
-                      const reader = new FileReader()
-                      reader.onload = () => setFeedbacks((prev) => prev.map((p, k) => k === i ? { ...p, photoUrl: reader.result } : p))
-                      reader.readAsDataURL(file)
+                      handleImageFile(file, (url) => setFeedbacks((prev) => prev.map((p, k) => k === i ? { ...p, photoUrl: url } : p)))
                     }} />
                   </label>
                 </div>
@@ -1176,9 +1198,7 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
                     {fb.printUrl ? 'trocar print' : 'usar print em vez do texto'}
                     <input type="file" accept="image/*" hidden onChange={(e) => {
                       const file = e.target.files[0]; if (!file) return
-                      const reader = new FileReader()
-                      reader.onload = () => setFeedbacks((prev) => prev.map((p, k) => k === i ? { ...p, printUrl: reader.result } : p))
-                      reader.readAsDataURL(file)
+                      handleImageFile(file, (url) => setFeedbacks((prev) => prev.map((p, k) => k === i ? { ...p, printUrl: url } : p)))
                     }} />
                   </label>
                   {fb.printUrl && <button onClick={() => setFeedbacks((prev) => prev.map((p, k) => k === i ? { ...p, printUrl: '' } : p))} className="text-[11px] text-red-600">remover print</button>}
@@ -1203,9 +1223,7 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
                   type="file" accept="image/*" hidden
                   onChange={(e) => {
                     const file = e.target.files[0]; if (!file) return
-                    const reader = new FileReader()
-                    reader.onload = () => setStepImages((prev) => { const next = [...prev]; next[i] = reader.result; return next })
-                    reader.readAsDataURL(file)
+                    handleImageFile(file, (url) => setStepImages((prev) => { const next = [...prev]; next[i] = url; return next }))
                   }}
                 />
               </label>
@@ -1294,9 +1312,7 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
                 {singleImage ? 'Trocar imagem' : '+ adicionar imagem'}
                 <input type="file" accept="image/*" hidden onChange={(e) => {
                   const file = e.target.files[0]; if (!file) return
-                  const reader = new FileReader()
-                  reader.onload = () => setSingleImage(reader.result)
-                  reader.readAsDataURL(file)
+                  handleImageFile(file, setSingleImage)
                 }} />
               </label>
               <label className="text-xs font-medium text-ink/70 block mb-1">Posição da imagem</label>
@@ -1309,9 +1325,12 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
         </div>
       )}
 
+      {uploadingCount > 0 && (
+        <p className="text-xs text-clay mb-2">Enviando {uploadingCount > 1 ? 'imagens' : 'imagem'}… aguarde antes de salvar.</p>
+      )}
       <div className="flex gap-2 mt-6">
         <button onClick={onClose} className="flex-1 text-sm py-2.5 rounded-lg border border-line text-muted">Cancelar</button>
-        <button onClick={save} className="flex-1 text-sm py-2.5 rounded-lg bg-clay text-white font-medium">Salvar</button>
+        <button onClick={save} disabled={uploadingCount > 0} className="flex-1 text-sm py-2.5 rounded-lg bg-clay text-white font-medium disabled:opacity-50">Salvar</button>
       </div>
     </div>
   )
@@ -1470,13 +1489,14 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
       const { bg, heading, titleColor } = slideColors(slide, SAND, c1)
       return (
         <SplitLayout image={slide.image} radius={radius} imageRight noImage={slide.noImage} imagePosition={slide.imagePosition} bg={bg}>
-          <div className="max-w-md mx-auto">
-            <h2 className="auto-left-item text-2xl md:text-3xl mb-6" style={{ ...titleStyle, color: titleColor }}>{slide.title}</h2>
-            {/* todos os textos aparecem juntos, vindos da esquerda, sem precisar clicar */}
-            {slide.items.map((it, i) => (
-              <p key={i} className="auto-left-item whitespace-pre-line mb-4 leading-relaxed" style={{ color: heading, opacity: 0.85 }}>{it}</p>
-            ))}
-          </div>
+          {/* sem div extra aqui — o próprio SplitLayout já centraliza e dimensiona o bloco de
+              texto; um wrapper "max-w-md mx-auto" aninhado por dentro dele competia com essa
+              centralização e podia empurrar o texto pro canto errado */}
+          <h2 className="auto-left-item text-2xl md:text-3xl mb-6" style={{ ...titleStyle, color: titleColor }}>{slide.title}</h2>
+          {/* todos os textos aparecem juntos, vindos da esquerda, sem precisar clicar */}
+          {slide.items.map((it, i) => (
+            <p key={i} className="auto-left-item whitespace-pre-line mb-4 leading-relaxed" style={{ color: heading, opacity: 0.85 }}>{it}</p>
+          ))}
         </SplitLayout>
       )
     }
