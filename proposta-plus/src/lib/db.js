@@ -97,7 +97,8 @@ export async function listProposals() {
 export async function getProposal(id) {
   const uid = requireUid()
   const snap = await getDoc(doc(db, 'users', uid, 'proposals', id))
-  return snap.exists() ? { id: snap.id, ...snap.data() } : null
+  if (!snap.exists()) return null
+  return hydrateMediaRefs(uid, id, { id: snap.id, ...snap.data() })
 }
 
 export async function saveProposal(proposal) {
@@ -134,7 +135,7 @@ export async function setProposalPublic(id, isPublic) {
 export async function getPublicProposal(uid, id) {
   const snap = await getDoc(doc(db, 'users', uid, 'proposals', id))
   if (!snap.exists()) return null
-  return { id: snap.id, ...snap.data() }
+  return hydrateMediaRefs(uid, id, { id: snap.id, ...snap.data() })
 }
 
 export async function getPublicSettings(uid) {
@@ -202,27 +203,72 @@ export async function deleteVideo(path) {
   try { await deleteObject(ref(storage, path)) } catch { /* já pode ter sido removido — ignora */ }
 }
 
-/* ---------------- IMAGENS (Firebase Storage — mesmo motivo do vídeo: o Firestore tem limite
- * de 1MB por documento. Fotos guardadas direto no texto (base64) enchiam esse limite rápido
- * quando a proposta tinha várias fotos, e a gravação falhava silenciosamente — as últimas fotos
- * adicionadas simplesmente não ficavam salvas, e por isso sumiam ao abrir a proposta em outro
- * aparelho. Agora a foto vai pro Storage e só a URL (bem curta) fica no documento.) ---------------- */
+/* ---------------- IMAGENS (sem usar o Firebase Storage, que só está no plano pago) ----------------
+ * Em vez de embutir a foto (base64) direto no documento da proposta — o que estourava o limite
+ * de 1MB por documento do Firestore quando havia várias fotos, e fazia o salvamento falhar
+ * silenciosamente — cada foto vira um DOCUMENTO SEPARADO, pequeno, numa subcoleção da própria
+ * proposta ("media"). O documento principal da proposta guarda só uma referência curta
+ * (ex: "firestoremedia://abc123"), nunca a foto em si — então ele nunca mais fica grande demais.
+ * O Firestore no plano gratuito não cobra nem limita a QUANTIDADE de documentos, só o tamanho
+ * de cada um — por isso isso resolve o problema sem precisar do Storage (que é pago). */
 
-export function uploadImage(file, onProgress) {
+const MEDIA_PREFIX = 'firestoremedia://'
+
+/** Comprime (no navegador) e salva uma foto como um novo documento na subcoleção "media" da
+ *  proposta, e devolve a referência curta que deve ser guardada no lugar da foto (em
+ *  slideOverrides, feedbacks, etc). A referência é sempre resolvida de volta pra foto de
+ *  verdade automaticamente ao carregar a proposta (ver hydrateMediaRefs). */
+export async function saveImageAsMedia(proposalId, dataUrl) {
   const uid = requireUid()
-  const path = `users/${uid}/images/${Date.now()}-${file.name.replace(/[^\w.\-]/g, '_')}`
-  const storageRef = ref(storage, path)
-  // usa upload simples (uploadBytes) em vez do resumível — pra fotos já comprimidas (poucos
-  // KB/1-2MB), o upload resumível tem um handshake inicial (criar sessão, depois enviar) que
-  // trava com facilidade em conexões de celular mais instáveis; o simples é uma única
-  // requisição e costuma ser bem mais confiável para esse tamanho de arquivo
-  onProgress?.(30)
-  return uploadBytes(storageRef, file).then(async () => {
-    onProgress?.(90)
-    const url = await getDownloadURL(storageRef)
-    onProgress?.(100)
-    return { url, path }
-  })
+  // ~1MB é o limite por documento do Firestore; a foto (base64) fica bem abaixo disso graças
+  // à compressão feita antes de chamar essa função — isso aqui é só uma trava de segurança
+  if (dataUrl.length > 900000) {
+    throw new Error('Imagem grande demais mesmo depois de comprimida — tente uma foto menor.')
+  }
+  const colRef = collection(db, 'users', uid, 'proposals', proposalId, 'media')
+  const docRef = await addDoc(colRef, { dataUrl, createdAt: serverTimestamp() })
+  return `${MEDIA_PREFIX}${docRef.id}`
+}
+
+function isMediaRef(v) {
+  return typeof v === 'string' && v.startsWith(MEDIA_PREFIX)
+}
+
+/** Percorre um objeto/array (recursivamente) trocando toda referência "firestoremedia://..."
+ *  pela foto de verdade (buscada na subcoleção "media"), com cache pra nunca buscar a mesma
+ *  foto duas vezes numa mesma chamada. Usada ao carregar a proposta, pra o resto do app nunca
+ *  precisar saber que essa camada existe — ele recebe a foto pronta, como sempre recebeu. */
+async function hydrateValue(uid, proposalId, value, cache) {
+  if (Array.isArray(value)) {
+    return Promise.all(value.map((v) => hydrateValue(uid, proposalId, v, cache)))
+  }
+  // só entra em objetos "comuns" (literais) — um Timestamp do Firestore (createdAt/updatedAt)
+  // também é um objeto, mas não deve ser desmontado feito um {toDate, seconds, ...} qualquer,
+  // senão vira um objeto comum e quebra quem espera um Timestamp de verdade (ex: .toDate())
+  if (value && typeof value === 'object' && value.constructor === Object) {
+    const keys = Object.keys(value)
+    const resolved = await Promise.all(keys.map((k) => hydrateValue(uid, proposalId, value[k], cache)))
+    const next = { ...value }
+    keys.forEach((k, i) => { next[k] = resolved[i] })
+    return next
+  }
+  if (isMediaRef(value)) {
+    const mediaId = value.slice(MEDIA_PREFIX.length)
+    if (cache.has(mediaId)) return cache.get(mediaId)
+    try {
+      const snap = await getDoc(doc(db, 'users', uid, 'proposals', proposalId, 'media', mediaId))
+      const dataUrl = snap.exists() ? snap.data().dataUrl : ''
+      cache.set(mediaId, dataUrl)
+      return dataUrl
+    } catch {
+      return '' // se não conseguir buscar (ex: sem permissão), some a foto em vez de quebrar a tela
+    }
+  }
+  return value
+}
+
+async function hydrateMediaRefs(uid, proposalId, proposalData) {
+  return hydrateValue(uid, proposalId, proposalData, new Map())
 }
 
 /* ---------------- CONFIGURAÇÕES DA EMPRESA ---------------- */

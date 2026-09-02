@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { getProposal, getSettings, getTemplateContent, saveProposal, saveTemplateContent, getPublicProposal, getPublicSettings, getPublicTemplateContent, setProposalPublic, uploadImage } from '../lib/db'
+import { getProposal, getSettings, getTemplateContent, saveProposal, saveTemplateContent, getPublicProposal, getPublicSettings, getPublicTemplateContent, setProposalPublic, saveImageAsMedia } from '../lib/db'
 import { auth } from '../lib/firebase'
 import { buildSlides } from '../lib/slides'
 import { DEFAULT_IMAGES, DEFAULT_SHARED_TEXT } from '../lib/content'
@@ -737,8 +737,23 @@ function withTimeout(promise, ms) {
  * que estava deixando o envio lento. Se der qualquer problema ao comprimir, devolve o arquivo
  * original (mais lento, mas nunca impede de enviar).
  */
-function resizeImageFile(file, maxDim = 1920, quality = 0.82) {
-  if (!file.type?.startsWith('image/') || file.type === 'image/svg+xml') return Promise.resolve(file)
+/**
+ * Reduz o tamanho da foto ANTES de salvar (redimensiona pro máximo de 1400px no lado maior e
+ * comprime como JPEG) e devolve já em base64 (data URL) — fotos de celular costumam vir com
+ * 3000-4000px e vários MB, e é isso que fazia o envio demorar e o texto final (base64) passar
+ * fácil de 1MB, o limite por documento do Firestore. Se der qualquer problema ao comprimir,
+ * devolve a foto original (convertida pra base64 do mesmo jeito) — nunca trava o envio.
+ */
+function resizeImageFile(file, maxDim = 1400, quality = 0.75) {
+  function fallbackToDataUrl() {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(reader.result)
+      reader.onerror = reject
+      reader.readAsDataURL(file)
+    })
+  }
+  if (!file.type?.startsWith('image/') || file.type === 'image/svg+xml') return fallbackToDataUrl()
   return new Promise((resolve) => {
     const img = new Image()
     const url = URL.createObjectURL(file)
@@ -755,15 +770,34 @@ function resizeImageFile(file, maxDim = 1920, quality = 0.82) {
       const ctx = canvas.getContext('2d')
       ctx.drawImage(img, 0, 0, width, height)
       cleanup()
-      canvas.toBlob((blob) => {
-        if (!blob) { resolve(file); return }
-        const name = (file.name || 'imagem').replace(/\.\w+$/, '') + '.jpg'
-        resolve(new File([blob], name, { type: 'image/jpeg' }))
-      }, 'image/jpeg', quality)
+      resolve(canvas.toDataURL('image/jpeg', quality))
     }
-    img.onerror = () => { cleanup(); resolve(file) }
+    img.onerror = () => { cleanup(); fallbackToDataUrl().then(resolve) }
     img.src = url
   })
+}
+
+/**
+ * Antes de gravar um slide, troca toda foto em base64 (data:image/...) por uma referência
+ * curta a um documento separado no Firestore — percorre arrays/objetos recursivamente, então
+ * funciona pra qualquer formato (um array de imagens, um objeto com .image, etc.) sem precisar
+ * saber o formato exato de cada campo.
+ */
+async function replaceDataUrls(value, proposalId) {
+  if (Array.isArray(value)) {
+    return Promise.all(value.map((v) => replaceDataUrls(v, proposalId)))
+  }
+  if (value && typeof value === 'object') {
+    const keys = Object.keys(value)
+    const resolved = await Promise.all(keys.map((k) => replaceDataUrls(value[k], proposalId)))
+    const next = { ...value }
+    keys.forEach((k, i) => { next[k] = resolved[i] })
+    return next
+  }
+  if (typeof value === 'string' && value.startsWith('data:image')) {
+    return saveImageAsMedia(proposalId, value)
+  }
+  return value
 }
 
 function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALETTE, proposal, onSaveVideoScope, onSaveFields, onSaveVisibility, embedded = false }) {
@@ -815,25 +849,18 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
   const isVideo = slide.type === 'video'
   const [embedUrl, setEmbedUrl] = useState(slide.embedUrl || '')
   const [uploadingCount, setUploadingCount] = useState(0)
-  const [uploadProgress, setUploadProgress] = useState(0)
 
-  /** Envia a foto pro Firebase Storage (em vez de guardar em base64 direto no documento —
-   *  isso é o que evitava a proposta "encher" o limite de 1MB do Firestore e fotos sumirem
-   *  silenciosamente ao salvar). Chama onDone(url) quando terminar. */
+  /** Comprime a foto e devolve o base64 pronto pra pré-visualizar aqui no painel — bem rápido,
+   *  tudo local, sem rede. O envio de verdade pro Firestore só acontece quando a pessoa aperta
+   *  "Salvar" (ver save() mais abaixo), pra não fazer uma viagem de rede por foto adicionada. */
   function handleImageFile(file, onDone) {
     if (!file) return
     setUploadingCount((n) => n + 1)
-    setUploadProgress(0)
-    // se comprimir travar ou demorar demais (10s), segue com o arquivo original em vez de
-    // ficar preso esperando; se o envio em si travar (30s), cai num erro claro em vez de
-    // deixar "Enviando… 0%" parado pra sempre
     withTimeout(resizeImageFile(file), 10000)
-      .catch(() => file)
-      .then((f) => withTimeout(uploadImage(f, (pct) => setUploadProgress(pct)), 30000))
-      .then(({ url }) => onDone(url))
+      .then((dataUrl) => onDone(dataUrl))
       .catch((err) => {
         console.error(err)
-        alert('Não consegui enviar essa imagem agora (demorou demais ou falhou). Verifique sua internet e tente de novo — se persistir, tente uma foto menor.')
+        alert('Não consegui processar essa imagem agora. Tente de novo ou use uma foto menor.')
       })
       .finally(() => setUploadingCount((n) => Math.max(0, n - 1)))
   }
@@ -880,7 +907,7 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
     })
   }
 
-  function save() {
+  async function save() {
     if (isVideo) {
       onSaveVideoScope?.(videoScope, { videoUrl: '', videoPath: '', embedUrl: toEmbedUrl(embedUrl) })
       onClose()
@@ -896,37 +923,51 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
     // (campo Descrição do acompanhamento de obra) — editar aqui atualiza esse campo, então
     // não fica um texto "preso" só nesta proposta, desalinhado do resto dos dados
     if (slide.id === 'obra') { onSaveFields?.({ acompanhamentoObraDescricao: description }) }
-    if (isPackagesSummary) {
-      onSave({ packageExtras }, 'proposal')
-      // os tópicos editados aqui são os mesmos campos "Benefícios do pacote" usados nos
-      // cards de cada pacote — salvar aqui atualiza os dois lugares de uma vez
-      const beneficiosPatch = {}
-      Object.entries(packageBenefits).forEach(([pkgId, text]) => {
-        beneficiosPatch[`beneficios${pkgId.charAt(0).toUpperCase()}${pkgId.slice(1)}`] = text
-      })
-      onSaveFields?.(beneficiosPatch)
-    }
-    if (isStages) { patch.stages = stages; patch.footnote = footnote }
-    if (isReasons) { patch.items = reasonsList }
-    if (isFeedbacks) { patch.items = feedbacks }
 
-    // imagens SEMPRE são salvas só nesta proposta, mesmo quando o resto do slide está marcado
-    // como "todas as propostas" — o conteúdo compartilhado não tem onde guardar imagem por
-    // slide, e salvar como "global" fazia a imagem se perder silenciosamente. Essa era a causa
-    // do "às vezes funciona, às vezes não" ao trocar imagem/posição em Sobre mim, Motivos, Agenda e Jornada.
-    const imagePatch = {}
-    let hasImagePatch = false
-    if (isMultiImage) {
-      Object.assign(imagePatch, { images, imageLayout, image: null, image2: null })
-      // a "Acompanhamento de obra" usa a descrição vinda de "Dados do projeto" (ver acima) —
-      // não duplica aqui como override, senão o texto do campo nunca mais apareceria
-      if (slide.id !== 'obra') imagePatch.description = description
-      hasImagePatch = true
+    // antes de gravar, troca toda foto (base64) por uma referência curta a um documento
+    // separado — é isso que evita a proposta estourar o limite de 1MB do Firestore. Só agora,
+    // no momento de salvar, é que a(s) foto(s) de fato viajam pro banco.
+    setUploadingCount((n) => n + 1)
+    try {
+      if (isPackagesSummary) {
+        const savedExtras = await replaceDataUrls(packageExtras, proposal.id)
+        onSave({ packageExtras: savedExtras }, 'proposal')
+        // os tópicos editados aqui são os mesmos campos "Benefícios do pacote" usados nos
+        // cards de cada pacote — salvar aqui atualiza os dois lugares de uma vez
+        const beneficiosPatch = {}
+        Object.entries(packageBenefits).forEach(([pkgId, text]) => {
+          beneficiosPatch[`beneficios${pkgId.charAt(0).toUpperCase()}${pkgId.slice(1)}`] = text
+        })
+        onSaveFields?.(beneficiosPatch)
+      }
+      if (isStages) { patch.stages = await replaceDataUrls(stages, proposal.id); patch.footnote = footnote }
+      if (isReasons) { patch.items = reasonsList }
+      if (isFeedbacks) { patch.items = await replaceDataUrls(feedbacks, proposal.id) }
+
+      // imagens SEMPRE são salvas só nesta proposta, mesmo quando o resto do slide está marcado
+      // como "todas as propostas" — o conteúdo compartilhado não tem onde guardar imagem por
+      // slide, e salvar como "global" fazia a imagem se perder silenciosamente. Essa era a causa
+      // do "às vezes funciona, às vezes não" ao trocar imagem/posição em Sobre mim, Motivos, Agenda e Jornada.
+      const imagePatch = {}
+      let hasImagePatch = false
+      if (isMultiImage) {
+        Object.assign(imagePatch, { images: await replaceDataUrls(images, proposal.id), imageLayout, image: null, image2: null })
+        // a "Acompanhamento de obra" usa a descrição vinda de "Dados do projeto" (ver acima) —
+        // não duplica aqui como override, senão o texto do campo nunca mais apareceria
+        if (slide.id !== 'obra') imagePatch.description = description
+        hasImagePatch = true
+      }
+      if (hasSingleImage) { Object.assign(imagePatch, { image: await replaceDataUrls(singleImage, proposal.id), noImage, imagePosition }); hasImagePatch = true }
+      if (isCover) { Object.assign(imagePatch, { image: await replaceDataUrls(coverImage, proposal.id) }); hasImagePatch = true }
+      if (slide.type === 'journeyFlow') { Object.assign(imagePatch, { stepImages: await replaceDataUrls(stepImages, proposal.id) }); hasImagePatch = true }
+      if (hasImagePatch) onSave(imagePatch, 'proposal')
+    } catch (err) {
+      console.error(err)
+      alert('Não consegui salvar uma das imagens agora. Tente de novo em alguns segundos.')
+      setUploadingCount((n) => Math.max(0, n - 1))
+      return
     }
-    if (hasSingleImage) { Object.assign(imagePatch, { image: singleImage, noImage, imagePosition }); hasImagePatch = true }
-    if (isCover) { Object.assign(imagePatch, { image: coverImage }); hasImagePatch = true }
-    if (slide.type === 'journeyFlow') { Object.assign(imagePatch, { stepImages }); hasImagePatch = true }
-    if (hasImagePatch) onSave(imagePatch, 'proposal')
+    setUploadingCount((n) => Math.max(0, n - 1))
 
     // cor de fundo/texto SEMPRE é salva só nesta proposta, pelo mesmo motivo das imagens: o
     // conteúdo compartilhado (Configurações > Textos padrão) não tem onde guardar cor por
@@ -1377,11 +1418,11 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
       )}
 
       {uploadingCount > 0 && (
-        <p className="text-xs text-clay mb-2">Enviando {uploadingCount > 1 ? 'imagens' : 'imagem'}… {uploadProgress}%</p>
+        <p className="text-xs text-clay mb-2">Processando imagem(ns)… um instante.</p>
       )}
       <div className="flex gap-2 mt-6">
         <button onClick={onClose} className="flex-1 text-sm py-2.5 rounded-lg border border-line text-muted">Cancelar</button>
-        <button onClick={save} disabled={uploadingCount > 0} className="flex-1 text-sm py-2.5 rounded-lg bg-clay text-white font-medium disabled:opacity-50">Salvar</button>
+        <button onClick={save} disabled={uploadingCount > 0} className="flex-1 text-sm py-2.5 rounded-lg bg-clay text-white font-medium disabled:opacity-50">{uploadingCount > 0 ? 'Salvando…' : 'Salvar'}</button>
       </div>
     </div>
   )
@@ -1415,10 +1456,22 @@ function ScaledCanvas({ children, onClick }) {
       setBox({ scale, left: (width - EXPORT_W * scale) / 2, top: (height - EXPORT_H * scale) / 2 })
     }
     recompute()
-    const ro = new ResizeObserver(recompute)
-    ro.observe(el)
+    // no celular, às vezes a altura real da tela (depois da barra de endereço recolher) só
+    // fica certa alguns instantes depois do primeiro desenho — sem essas novas tentativas, o
+    // slide podia ficar "gigante" (sem encolher pra caber) até a pessoa girar o celular
+    const raf = requestAnimationFrame(() => requestAnimationFrame(recompute))
+    const timers = [100, 300, 800].map((ms) => setTimeout(recompute, ms))
+    window.addEventListener('resize', recompute)
     window.addEventListener('orientationchange', recompute)
-    return () => { ro.disconnect(); window.removeEventListener('orientationchange', recompute) }
+    let ro
+    if (typeof ResizeObserver !== 'undefined') { ro = new ResizeObserver(recompute); ro.observe(el) }
+    return () => {
+      ro?.disconnect()
+      cancelAnimationFrame(raf)
+      timers.forEach(clearTimeout)
+      window.removeEventListener('resize', recompute)
+      window.removeEventListener('orientationchange', recompute)
+    }
   }, [])
 
   return (
