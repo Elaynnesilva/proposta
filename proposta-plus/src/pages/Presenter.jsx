@@ -722,6 +722,41 @@ function ImagePositionPicker({ image, onChange }) {
 
 const COLOR_CUSTOMIZABLE_TYPES = new Set(['divider', 'agenda', 'profile', 'clientRequest', 'reasons', 'scopeSection', 'modeling', 'journeyFlow', 'stages', 'feedbacks', 'pricingCalc', 'packagePricing', 'packagesSummary', 'custom', 'closing'])
 
+/**
+ * Reduz o tamanho da foto ANTES de enviar (redimensiona pro máximo de 1920px no lado maior e
+ * comprime como JPEG) — fotos de celular costumam vir com 3000-4000px e vários MB, e isso é o
+ * que estava deixando o envio lento. Se der qualquer problema ao comprimir, devolve o arquivo
+ * original (mais lento, mas nunca impede de enviar).
+ */
+function resizeImageFile(file, maxDim = 1920, quality = 0.82) {
+  if (!file.type?.startsWith('image/') || file.type === 'image/svg+xml') return Promise.resolve(file)
+  return new Promise((resolve) => {
+    const img = new Image()
+    const url = URL.createObjectURL(file)
+    const cleanup = () => URL.revokeObjectURL(url)
+    img.onload = () => {
+      let { width, height } = img
+      if (width > maxDim || height > maxDim) {
+        if (width > height) { height = Math.round(height * (maxDim / width)); width = maxDim }
+        else { width = Math.round(width * (maxDim / height)); height = maxDim }
+      }
+      const canvas = document.createElement('canvas')
+      canvas.width = width
+      canvas.height = height
+      const ctx = canvas.getContext('2d')
+      ctx.drawImage(img, 0, 0, width, height)
+      cleanup()
+      canvas.toBlob((blob) => {
+        if (!blob) { resolve(file); return }
+        const name = (file.name || 'imagem').replace(/\.\w+$/, '') + '.jpg'
+        resolve(new File([blob], name, { type: 'image/jpeg' }))
+      }, 'image/jpeg', quality)
+    }
+    img.onerror = () => { cleanup(); resolve(file) }
+    img.src = url
+  })
+}
+
 function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALETTE, proposal, onSaveVideoScope, onSaveFields, onSaveVisibility, embedded = false }) {
   // padrão é "todas as propostas" apenas quando essa opção existe pro tipo de slide (allowGlobal);
   // do contrário, o escopo é sempre "só esta proposta" — bug crítico corrigido aqui: antes disso,
@@ -771,6 +806,7 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
   const isVideo = slide.type === 'video'
   const [embedUrl, setEmbedUrl] = useState(slide.embedUrl || '')
   const [uploadingCount, setUploadingCount] = useState(0)
+  const [uploadProgress, setUploadProgress] = useState(0)
 
   /** Envia a foto pro Firebase Storage (em vez de guardar em base64 direto no documento —
    *  isso é o que evitava a proposta "encher" o limite de 1MB do Firestore e fotos sumirem
@@ -778,11 +814,13 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
   function handleImageFile(file, onDone) {
     if (!file) return
     setUploadingCount((n) => n + 1)
-    uploadImage(file)
+    setUploadProgress(0)
+    resizeImageFile(file)
+      .then((smallerFile) => uploadImage(smallerFile, (pct) => setUploadProgress(pct)))
       .then(({ url }) => onDone(url))
       .catch((err) => {
         console.error(err)
-        alert('Não consegui enviar essa imagem agora. Tente de novo em alguns segundos.')
+        alert('Não consegui enviar essa imagem agora. Verifique sua internet e tente de novo.')
       })
       .finally(() => setUploadingCount((n) => Math.max(0, n - 1)))
   }
@@ -1326,7 +1364,7 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
       )}
 
       {uploadingCount > 0 && (
-        <p className="text-xs text-clay mb-2">Enviando {uploadingCount > 1 ? 'imagens' : 'imagem'}… aguarde antes de salvar.</p>
+        <p className="text-xs text-clay mb-2">Enviando {uploadingCount > 1 ? 'imagens' : 'imagem'}… {uploadProgress}%</p>
       )}
       <div className="flex gap-2 mt-6">
         <button onClick={onClose} className="flex-1 text-sm py-2.5 rounded-lg border border-line text-muted">Cancelar</button>
