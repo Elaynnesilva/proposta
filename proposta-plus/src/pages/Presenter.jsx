@@ -74,8 +74,18 @@ export default function Presenter() {
         // grava no Firestore uma cópia com as fotos trocadas por referências curtas (pra nunca
         // estourar o limite de 1MB por documento) — mas o estado local (a variável "next", que
         // é o que aparece na tela) continua com a foto de verdade, então ela aparece na hora,
-        // sem precisar recarregar a página
-        replaceDataUrls(next, next.id).then((toSave) => saveProposal(toSave)).then(() => resolve(next))
+        // sem precisar recarregar a página. Se esse salvamento falhar (ex: imagem grande
+        // demais mesmo depois de comprimida, ou sem internet), avisa em vez de falhar em
+        // silêncio — antes disso, a mudança ficava só na tela e sumia ao recarregar a página,
+        // sem nenhum aviso de que não tinha sido salva de verdade.
+        replaceDataUrls(next, next.id)
+          .then((toSave) => saveProposal(toSave))
+          .then(() => resolve(next))
+          .catch((err) => {
+            console.error(err)
+            alert(`Não consegui salvar essa alteração (${err?.message || 'erro desconhecido'}). Ela pode não aparecer se você recarregar a página — tente de novo, ou use uma foto menor.`)
+            resolve(next)
+          })
         return next
       })
     })
@@ -86,7 +96,9 @@ export default function Presenter() {
     setProposal((prev) => {
       const previous = historyRef.current.pop()
       futureRef.current.push(prev)
-      replaceDataUrls(previous, previous.id).then((toSave) => saveProposal(toSave))
+      replaceDataUrls(previous, previous.id)
+        .then((toSave) => saveProposal(toSave))
+        .catch((err) => { console.error(err); alert('Não consegui salvar o "desfazer". Tente de novo.') })
       setHistoryVersion((v) => v + 1)
       return previous
     })
@@ -97,7 +109,9 @@ export default function Presenter() {
     setProposal((prev) => {
       const nextState = futureRef.current.pop()
       historyRef.current.push(prev)
-      replaceDataUrls(nextState, nextState.id).then((toSave) => saveProposal(toSave))
+      replaceDataUrls(nextState, nextState.id)
+        .then((toSave) => saveProposal(toSave))
+        .catch((err) => { console.error(err); alert('Não consegui salvar o "refazer". Tente de novo.') })
       setHistoryVersion((v) => v + 1)
       return nextState
     })
@@ -767,18 +781,36 @@ function resizeImageFile(file, maxDim = 1400, quality = 0.75) {
     const url = URL.createObjectURL(file)
     const cleanup = () => URL.revokeObjectURL(url)
     img.onload = () => {
-      let { width, height } = img
-      if (width > maxDim || height > maxDim) {
-        if (width > height) { height = Math.round(height * (maxDim / width)); width = maxDim }
-        else { width = Math.round(width * (maxDim / height)); height = maxDim }
+      // margem confortável abaixo de 1MB (o limite por documento do Firestore) — PNG não tem
+      // um controle de "qualidade" como o JPEG, então se ainda não couber depois de gerar,
+      // tenta de novo em tamanhos cada vez menores (até 6 vezes) em vez de desistir e a foto
+      // simplesmente não salvar (o que estava fazendo fotos com fundo transparente sumirem
+      // silenciosamente ao recarregar a página — o salvamento falhava sem avisar ninguém)
+      const TARGET_CHARS = 800000
+      function renderAt(dim, q) {
+        let { width, height } = img
+        if (width > dim || height > dim) {
+          if (width > height) { height = Math.round(height * (dim / width)); width = dim }
+          else { width = Math.round(width * (dim / height)); height = dim }
+        }
+        const canvas = document.createElement('canvas')
+        canvas.width = width
+        canvas.height = height
+        const ctx = canvas.getContext('2d')
+        ctx.drawImage(img, 0, 0, width, height)
+        return preserveAlpha ? canvas.toDataURL('image/png') : canvas.toDataURL('image/jpeg', q)
       }
-      const canvas = document.createElement('canvas')
-      canvas.width = width
-      canvas.height = height
-      const ctx = canvas.getContext('2d')
-      ctx.drawImage(img, 0, 0, width, height)
+      let dim = maxDim
+      let q = quality
+      let out = renderAt(dim, q)
+      let attempts = 0
+      while (out.length > TARGET_CHARS && attempts < 6) {
+        if (!preserveAlpha && q > 0.4) { q = Math.max(0.4, q - 0.15) } else { dim = Math.round(dim * 0.75) }
+        out = renderAt(dim, q)
+        attempts++
+      }
       cleanup()
-      resolve(preserveAlpha ? canvas.toDataURL('image/png') : canvas.toDataURL('image/jpeg', quality))
+      resolve(out)
     }
     img.onerror = () => { cleanup(); fallbackToDataUrl().then(resolve) }
     img.src = url
