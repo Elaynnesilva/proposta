@@ -373,7 +373,7 @@ export default function Presenter() {
   }
 
   return (
-    <div className="fixed inset-0 bg-ink text-white select-none" style={{ ...cssVars, fontFamily: STYLE.bodyFont }}>
+    <div className="fixed inset-0 bg-ink text-white select-none overflow-hidden" style={{ ...cssVars, fontFamily: STYLE.bodyFont }}>
 
       {/* ============ MOBILE (abaixo de "sm"): tela empilhada ============
           tela do slide fixa no topo, ícones fixos logo abaixo, e a lista de slides
@@ -381,7 +381,7 @@ export default function Presenter() {
       <div className="sm:hidden h-full flex flex-col">
         <div
           ref={mobileSlideRef}
-          className={isFullscreen ? 'relative shrink-0 bg-ink w-full h-full' : 'relative shrink-0 bg-ink'}
+          className={isFullscreen ? 'relative shrink-0 bg-ink w-full h-full overflow-hidden' : 'relative shrink-0 bg-ink overflow-hidden'}
           style={isFullscreen ? {} : { height: '38vh', minHeight: 220 }}
         >
           <ScaledCanvas onClick={handleAdvance}>
@@ -468,7 +468,7 @@ export default function Presenter() {
           />
         )}
 
-        <div className="relative flex-1 min-w-0">
+        <div className="relative flex-1 min-w-0 overflow-hidden">
           <ScaledCanvas onClick={handleAdvance}>
             <SlideView slide={slide} c1={c1} c2={c2} c3={c3} revealCount={revealCount} settings={settings} />
           </ScaledCanvas>
@@ -722,6 +722,15 @@ function ImagePositionPicker({ image, onChange }) {
 
 const COLOR_CUSTOMIZABLE_TYPES = new Set(['divider', 'agenda', 'profile', 'clientRequest', 'reasons', 'scopeSection', 'modeling', 'journeyFlow', 'stages', 'feedbacks', 'pricingCalc', 'packagePricing', 'packagesSummary', 'custom', 'closing'])
 
+/** Roda uma promise com um prazo máximo — se estourar, rejeita, mesmo que a promise original
+ *  nunca "resolva nem falhe" (é o que evita a pessoa ficar presa num "Enviando… 0%" pra sempre). */
+function withTimeout(promise, ms) {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error('timeout')), ms)
+    promise.then((v) => { clearTimeout(t); resolve(v) }, (e) => { clearTimeout(t); reject(e) })
+  })
+}
+
 /**
  * Reduz o tamanho da foto ANTES de enviar (redimensiona pro máximo de 1920px no lado maior e
  * comprime como JPEG) — fotos de celular costumam vir com 3000-4000px e vários MB, e isso é o
@@ -815,12 +824,16 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
     if (!file) return
     setUploadingCount((n) => n + 1)
     setUploadProgress(0)
-    resizeImageFile(file)
-      .then((smallerFile) => uploadImage(smallerFile, (pct) => setUploadProgress(pct)))
+    // se comprimir travar ou demorar demais (10s), segue com o arquivo original em vez de
+    // ficar preso esperando; se o envio em si travar (30s), cai num erro claro em vez de
+    // deixar "Enviando… 0%" parado pra sempre
+    withTimeout(resizeImageFile(file), 10000)
+      .catch(() => file)
+      .then((f) => withTimeout(uploadImage(f, (pct) => setUploadProgress(pct)), 30000))
       .then(({ url }) => onDone(url))
       .catch((err) => {
         console.error(err)
-        alert('Não consegui enviar essa imagem agora. Verifique sua internet e tente de novo.')
+        alert('Não consegui enviar essa imagem agora (demorou demais ou falhou). Verifique sua internet e tente de novo — se persistir, tente uma foto menor.')
       })
       .finally(() => setUploadingCount((n) => Math.max(0, n - 1)))
   }

@@ -22,7 +22,7 @@ import {
 } from 'firebase/firestore'
 import { auth, db, googleProvider, storage } from './firebase'
 import { defaultFieldsObject } from './fields'
-import { ref, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage'
+import { ref, uploadBytesResumable, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage'
 
 let cachedUser = null
 
@@ -212,17 +212,16 @@ export function uploadImage(file, onProgress) {
   const uid = requireUid()
   const path = `users/${uid}/images/${Date.now()}-${file.name.replace(/[^\w.\-]/g, '_')}`
   const storageRef = ref(storage, path)
-  const task = uploadBytesResumable(storageRef, file)
-  return new Promise((resolve, reject) => {
-    task.on(
-      'state_changed',
-      (snap) => onProgress?.(Math.round((snap.bytesTransferred / snap.totalBytes) * 100)),
-      (err) => reject(err),
-      async () => {
-        const url = await getDownloadURL(task.snapshot.ref)
-        resolve({ url, path })
-      }
-    )
+  // usa upload simples (uploadBytes) em vez do resumível — pra fotos já comprimidas (poucos
+  // KB/1-2MB), o upload resumível tem um handshake inicial (criar sessão, depois enviar) que
+  // trava com facilidade em conexões de celular mais instáveis; o simples é uma única
+  // requisição e costuma ser bem mais confiável para esse tamanho de arquivo
+  onProgress?.(30)
+  return uploadBytes(storageRef, file).then(async () => {
+    onProgress?.(90)
+    const url = await getDownloadURL(storageRef)
+    onProgress?.(100)
+    return { url, path }
   })
 }
 
