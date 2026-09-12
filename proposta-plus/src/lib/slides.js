@@ -101,7 +101,9 @@ export function buildSlides({ fields, content, images, settings, custom = [], vi
 
   if (hasValue(f('acompanhamentoObraMeses')) || hasValue(f('acompanhamentoObraDias'))) {
     list.push({
-      id: 'obra', type: 'scopeSection', title: 'Acompanhamento de obra', image: images.scope, images: [], imageLayout: 'row',
+      // imagem FIXA na lateral (e não uma faixa de fotos embaixo, como nas seções de escopo):
+      // é um slide de uma foto só, com posição (esquerda/direita) e enquadramento ajustáveis
+      id: 'obra', type: 'scopeSplit', title: 'Acompanhamento de obra', image: images.obra || images.scope,
       description: f('acompanhamentoObraDescricao'),
       items: [
         hasValue(f('acompanhamentoObraMeses')) && `${f('acompanhamentoObraMeses')} meses de acompanhamento`,
