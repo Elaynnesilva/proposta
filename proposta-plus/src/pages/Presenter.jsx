@@ -55,6 +55,21 @@ function exportFileName(proposal) {
   return `${safe} - Proposta - ${dd}-${mm}-${aa}.pdf`
 }
 
+/**
+ * "Missing or insufficient permissions" ao salvar para as outras propostas quer dizer uma
+ * coisa só: as regras do Firestore publicadas no console ainda não têm a biblioteca de
+ * imagens da conta (users/{uid}/media) — o arquivo firestore.rules do projeto tem, mas ele
+ * não vai sozinho para o Firebase junto com o deploy da Vercel, precisa ser publicado lá.
+ * Sem essa regra, a foto não tem onde ser gravada e o salvamento inteiro é recusado.
+ */
+function scopeSaveErrorMessage(err) {
+  const msg = err?.message || ''
+  if (err?.code === 'permission-denied' || /permission/i.test(msg)) {
+    return 'O Firebase recusou o salvamento (permissão). Publique as regras do arquivo firestore.rules no Console do Firebase (Firestore Database > Regras > Publicar) — elas precisam incluir a biblioteca de imagens da conta. Enquanto isso, use "Só nesta proposta", que continua funcionando.'
+  }
+  return `Não consegui salvar essa edição para as outras propostas (${msg || 'erro desconhecido'}). Tente de novo, ou use uma foto menor.`
+}
+
 export default function Presenter() {
   const { id, uid: publicUid } = useParams()
   const isPublic = !!publicUid
@@ -358,7 +373,7 @@ export default function Presenter() {
           .then(resolve)
           .catch((err) => {
             console.error(err)
-            alert(`Não consegui salvar essa edição para as outras propostas (${err?.message || 'erro desconhecido'}). Tente de novo, ou use uma foto menor.`)
+            alert(scopeSaveErrorMessage(err))
             resolve()
           })
         return nextContent
