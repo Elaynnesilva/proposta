@@ -199,7 +199,12 @@ export default function Presenter() {
   const tipologiaVideo = templateContent?.images?.[proposal?.tipologia] || {}
   const sharedVideo = templateContent?.sharedVideo || {}
   const resolvedVideoUrl = proposal?.videoUrl || tipologiaVideo.videoUrl || sharedVideo.videoUrl || ''
-  const resolvedEmbedUrl = proposal?.videoEmbedUrl || tipologiaVideo.videoEmbedUrl || sharedVideo.videoEmbedUrl || ''
+  // o painel de edição chama o link do YouTube de "embedUrl" e o conteúdo do modelo o chama de
+  // "videoEmbedUrl" — aceita os dois nomes aqui, senão um vídeo salvo para o tipo de projeto ou
+  // para todos os tipos era gravado com um nome e procurado com o outro, e nunca aparecia
+  const resolvedEmbedUrl = proposal?.videoEmbedUrl
+    || tipologiaVideo.videoEmbedUrl || tipologiaVideo.embedUrl
+    || sharedVideo.videoEmbedUrl || sharedVideo.embedUrl || ''
 
   const baseSlides = useMemo(() => {
     if (!proposal || !settings) return []
@@ -413,20 +418,42 @@ export default function Presenter() {
       saveOverridePerProposal('video', patch)
       return
     }
-    if (scope === 'tipologia') {
+
+    // o conteúdo do modelo guarda o link com o nome "videoEmbedUrl" (é o que a resolução em
+    // cascata lá em cima procura); o painel manda como "embedUrl". Traduz aqui, num lugar só.
+    const templatePatch = {
+      videoUrl: patch.videoUrl || '',
+      videoPath: patch.videoPath || '',
+      videoEmbedUrl: patch.embedUrl || '',
+    }
+
+    // um vídeo salvo antes "só nesta proposta" venceria o padrão que está sendo gravado agora
+    // (inclusive um link apagado, que fica salvo como vazio) — então limpa esse resto primeiro,
+    // senão dá a impressão de que salvar para as outras propostas não funcionou
+    updateProposal((prev) => {
+      const overrides = { ...(prev.slideOverrides || {}) }
+      const tinhaOverride = !!overrides.video
+      delete overrides.video
+      if (!tinhaOverride && !prev.videoUrl && !prev.videoEmbedUrl) return prev
+      return { ...prev, slideOverrides: overrides, videoUrl: '', videoEmbedUrl: '' }
+    })
+
+    return new Promise((resolve) => {
       setTemplateContent((prev) => {
-        const nextImages = { ...(prev?.images || {}), [proposal.tipologia]: { ...(prev?.images?.[proposal.tipologia] || {}), ...patch } }
-        const nextContent = { ...(prev || {}), images: nextImages }
+        const nextContent = scope === 'tipologia'
+          ? {
+              ...(prev || {}),
+              images: {
+                ...(prev?.images || {}),
+                [proposal.tipologia]: { ...(prev?.images?.[proposal.tipologia] || {}), ...templatePatch },
+              },
+            }
+          : { ...(prev || {}), sharedVideo: { ...(prev?.sharedVideo || {}), ...templatePatch } }
         saveTemplateContent(nextContent)
+          .then(resolve)
+          .catch((err) => { console.error(err); alert(scopeSaveErrorMessage(err)); resolve() })
         return nextContent
       })
-      return
-    }
-    // 'allTypes'
-    setTemplateContent((prev) => {
-      const nextContent = { ...(prev || {}), sharedVideo: { ...(prev?.sharedVideo || {}), ...patch } }
-      saveTemplateContent(nextContent)
-      return nextContent
     })
   }
 
