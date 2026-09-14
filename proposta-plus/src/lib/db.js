@@ -146,7 +146,8 @@ export async function getPublicSettings(uid) {
 
 export async function getPublicTemplateContent(uid) {
   const snap = await getDoc(doc(db, 'users', uid))
-  return snap.exists() ? (snap.data().content || {}) : {}
+  const content = snap.exists() ? (snap.data().content || {}) : {}
+  return hydrateValue(uid, null, content, new Map())
 }
 
 /* ---------------- COMPROMISSOS AVULSOS DA AGENDA (não ligados a nenhuma proposta) ---------------- */
@@ -213,6 +214,11 @@ export async function deleteVideo(path) {
  * de cada um — por isso isso resolve o problema sem precisar do Storage (que é pago). */
 
 const MEDIA_PREFIX = 'firestoremedia://'
+/* Fotos que valem para VÁRIAS propostas (uma tipologia inteira, ou todas) não podem morar
+ * dentro da subcoleção de uma proposta — se a proposta for apagada, ou se outra proposta
+ * precisar da mesma foto, a referência quebra. Por isso existe uma segunda biblioteca, da
+ * CONTA inteira (users/{uid}/media), usada pelo "conteúdo do modelo". */
+const SHARED_MEDIA_PREFIX = 'sharedmedia://'
 
 /** Comprime (no navegador) e salva uma foto como um novo documento na subcoleção "media" da
  *  proposta, e devolve a referência curta que deve ser guardada no lugar da foto (em
@@ -230,8 +236,41 @@ export async function saveImageAsMedia(proposalId, dataUrl) {
   return `${MEDIA_PREFIX}${docRef.id}`
 }
 
+/** Igual à de cima, mas guarda a foto na biblioteca da CONTA (users/{uid}/media) em vez de
+ *  dentro de uma proposta — é assim que uma mesma imagem pode aparecer em várias propostas
+ *  (de uma tipologia, ou de todas) sem precisar ser reenviada em cada uma. */
+export async function saveSharedImage(dataUrl) {
+  const uid = requireUid()
+  if (dataUrl.length > 900000) {
+    throw new Error('Imagem grande demais mesmo depois de comprimida — tente uma foto menor.')
+  }
+  const colRef = collection(db, 'users', uid, 'media')
+  const docRef = await addDoc(colRef, { dataUrl, createdAt: serverTimestamp() })
+  return `${SHARED_MEDIA_PREFIX}${docRef.id}`
+}
+
+/** Percorre um objeto trocando toda foto em base64 por uma referência curta da biblioteca
+ *  da conta. Usada antes de gravar o conteúdo do modelo, que fica no documento do usuário
+ *  (e, como qualquer documento do Firestore, não pode passar de 1MB). */
+async function replaceDataUrlsWithSharedMedia(value) {
+  if (Array.isArray(value)) return Promise.all(value.map(replaceDataUrlsWithSharedMedia))
+  if (value && typeof value === 'object' && value.constructor === Object) {
+    const keys = Object.keys(value)
+    const resolved = await Promise.all(keys.map((k) => replaceDataUrlsWithSharedMedia(value[k])))
+    const next = { ...value }
+    keys.forEach((k, i) => { next[k] = resolved[i] })
+    return next
+  }
+  if (typeof value === 'string' && value.startsWith('data:image')) return saveSharedImage(value)
+  return value
+}
+
 function isMediaRef(v) {
   return typeof v === 'string' && v.startsWith(MEDIA_PREFIX)
+}
+
+function isSharedMediaRef(v) {
+  return typeof v === 'string' && v.startsWith(SHARED_MEDIA_PREFIX)
 }
 
 /** Percorre um objeto/array (recursivamente) trocando toda referência "firestoremedia://..."
@@ -252,7 +291,21 @@ async function hydrateValue(uid, proposalId, value, cache) {
     keys.forEach((k, i) => { next[k] = resolved[i] })
     return next
   }
+  if (isSharedMediaRef(value)) {
+    const mediaId = value.slice(SHARED_MEDIA_PREFIX.length)
+    const key = `shared:${mediaId}`
+    if (cache.has(key)) return cache.get(key)
+    try {
+      const snap = await getDoc(doc(db, 'users', uid, 'media', mediaId))
+      const dataUrl = snap.exists() ? snap.data().dataUrl : ''
+      cache.set(key, dataUrl)
+      return dataUrl
+    } catch {
+      return ''
+    }
+  }
   if (isMediaRef(value)) {
+    if (!proposalId) return '' // ref de proposta encontrada fora de uma proposta — não há onde buscar
     const mediaId = value.slice(MEDIA_PREFIX.length)
     if (cache.has(mediaId)) return cache.get(mediaId)
     try {
@@ -322,11 +375,15 @@ export async function getTemplateContent() {
   const uid = requireUid()
   const snap = await getDoc(doc(db, 'users', uid))
   const data = snap.exists() ? snap.data() : {}
-  return data.content || null // null = usar os padrões definidos em lib/content.js
+  if (!data.content) return null // null = usar os padrões definidos em lib/content.js
+  // troca as referências curtas de volta pelas fotos de verdade (biblioteca da conta)
+  return hydrateValue(uid, null, data.content, new Map())
 }
 
 export async function saveTemplateContent(content) {
   const uid = requireUid()
-  await setDoc(doc(db, 'users', uid), { content }, { merge: true })
+  const toSave = await replaceDataUrlsWithSharedMedia(content)
+  await setDoc(doc(db, 'users', uid), { content: toSave }, { merge: true })
+  // devolve a versão com as fotos de verdade, pra tela continuar mostrando na hora
   return content
 }

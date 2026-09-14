@@ -116,7 +116,12 @@ export default function Editor() {
         ))}
       </div>
 
-      {tab === 'dados' && <DataTable fields={proposal.fields || {}} onChange={(fields) => persist({ fields })} />}
+      {tab === 'dados' && (
+        <>
+          <TipologiaPicker proposal={proposal} onChange={persist} />
+          <DataTable fields={proposal.fields || {}} onChange={(fields) => persist({ fields })} />
+        </>
+      )}
       {tab === 'agendamentos' && <AgendamentosTab proposal={proposal} />}
       {tab === 'design' && <DesignTab proposal={proposal} onChange={persist} />}
       {tab === 'precos' && <PricingVisibilityTab proposal={proposal} onChange={persist} />}
@@ -311,23 +316,32 @@ function AgendamentoForm({ proposal, editing, onClose, onSaved }) {
   )
 }
 
+/**
+ * Tipologia do projeto. Fica no topo de "Dados do projeto" (e não mais em "Design e cores")
+ * porque é a primeira decisão da proposta: é ela que define quais fotos e vídeos padrão a
+ * apresentação vai puxar — então precisa estar escolhida antes de colar a tabela de dados.
+ */
+function TipologiaPicker({ proposal, onChange }) {
+  return (
+    <div className="mb-6 p-4 border border-line rounded-xl bg-white">
+      <h3 className="font-medium text-ink mb-1 text-sm">Tipologia do projeto</h3>
+      <p className="text-sm text-muted mb-3">Define quais fotos e vídeos padrão aparecem na apresentação. Os textos continuam os mesmos nos 3 tipos.</p>
+      <div className="flex gap-2 flex-wrap">
+        {TIPOLOGIAS.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => onChange({ tipologia: t.id })}
+            className={`px-4 py-2 rounded-full text-sm border transition ${proposal.tipologia === t.id ? 'bg-ink text-white border-ink' : 'border-line text-ink/70 hover:bg-sand'}`}
+          >{t.label}</button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function DesignTab({ proposal, onChange }) {
   return (
     <div className="space-y-10 max-w-2xl">
-      <section>
-        <h3 className="font-medium text-ink mb-1">Tipologia do projeto</h3>
-        <p className="text-sm text-muted mb-3">Define quais fotos e vídeos padrão aparecem na apresentação. Os textos continuam os mesmos nos 3 tipos.</p>
-        <div className="flex gap-2 flex-wrap">
-          {TIPOLOGIAS.map((t) => (
-            <button
-              key={t.id}
-              onClick={() => onChange({ tipologia: t.id })}
-              className={`px-4 py-2 rounded-full text-sm border transition ${proposal.tipologia === t.id ? 'bg-ink text-white border-ink' : 'border-line text-ink/70 hover:bg-sand'}`}
-            >{t.label}</button>
-          ))}
-        </div>
-      </section>
-
       <section>
         <h3 className="font-medium text-ink mb-1">Paleta de cores</h3>
         <p className="text-sm text-muted mb-4">Escolha até 3 cores: destaque, base e fundo.</p>
@@ -446,7 +460,9 @@ function CustomSlidesTab({ proposal, onChange }) {
   const slides = proposal.customSlides || []
 
   function addSlide() {
-    onChange({ customSlides: [...slides, { title: 'Novo slide', items: [''], image: '', embedUrl: '' }] })
+    // o id precisa ser estável: é por ele que o slide extra é reconhecido ao ser salvo
+    // "para todas as propostas" (vira parte do modelo) e ao ser editado depois
+    onChange({ customSlides: [...slides, { id: `custom-${Date.now().toString(36)}`, title: 'Novo slide', items: [''], images: [], imageLayout: 'row', image: '', embedUrl: '' }] })
   }
   function updateSlide(i, patch) {
     const next = slides.map((s, idx) => (idx === i ? { ...s, ...patch } : s))

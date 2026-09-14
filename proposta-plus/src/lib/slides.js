@@ -101,7 +101,9 @@ export function buildSlides({ fields, content, images, settings, custom = [], vi
 
   if (hasValue(f('acompanhamentoObraMeses')) || hasValue(f('acompanhamentoObraDias'))) {
     list.push({
-      id: 'obra', type: 'scopeSection', title: 'Acompanhamento de obra', image: images.scope, images: [], imageLayout: 'row',
+      // imagem FIXA na lateral (e não uma faixa de fotos embaixo, como nas seções de escopo):
+      // é um slide de uma foto só, com posição (esquerda/direita) e enquadramento ajustáveis
+      id: 'obra', type: 'scopeSplit', title: 'Acompanhamento de obra', image: images.obra || images.scope,
       description: f('acompanhamentoObraDescricao'),
       items: [
         hasValue(f('acompanhamentoObraMeses')) && `${f('acompanhamentoObraMeses')} meses de acompanhamento`,
@@ -113,11 +115,22 @@ export function buildSlides({ fields, content, images, settings, custom = [], vi
   const etapas = listItems(f('etapasPrincipais'))
   list.push({ id: 'journey', type: 'journeyFlow', title: 'Jornada do cliente', subtitle: content.journeySubtitle, items: etapas.length ? etapas : content.journey, stepImages: [] })
 
+  /**
+   * Prazo previsto de cada apresentação. Cada PACOTE tem a sua própria data para a 1ª, 2ª e
+   * 3ª apresentação (campos "Completo - 1° apresentação", "Básico - 1° apresentação"…), então
+   * a mesma etapa mostra as três datas, uma por pacote — e só entram os pacotes que estão
+   * aparecendo nesta proposta.
+   */
+  const prazosDaApresentacao = (n) => PACKAGE_LIST
+    .filter((pkg) => vis.packages[pkg.id] !== false && hasValue(f(`pacote${cap(pkg.id)}Valor`)))
+    .map((pkg) => ({ id: pkg.id, label: pkg.label, date: f(`${pkg.id}Apresentacao${n}`) }))
+    .filter((d) => hasValue(d.date))
+
   list.push({
     id: 'stages',
     type: 'stages',
     title: content.stagesTitle,
-    stages: content.stages,
+    stages: (content.stages || []).map((st, i) => ({ ...st, deadlines: i < 3 ? prazosDaApresentacao(i + 1) : [] })),
     footnote: content.observations,
   })
 

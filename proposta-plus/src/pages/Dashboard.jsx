@@ -28,7 +28,19 @@ export default function Dashboard() {
 
   async function refresh() {
     setLoading(true)
-    setProposals(await listProposals())
+    const todas = await listProposals()
+    const agora = Date.now()
+    const intocadas = todas.filter(isUntouchedDraft)
+
+    // apaga de vez as que já passaram do prazo de carência (as recém-criadas ficam de fora
+    // da lista, mas só são apagadas na próxima visita — ver comentário em DRAFT_GRACE_MS)
+    const paraApagar = intocadas.filter((p) => agora - toMillis(p.updatedAt) > DRAFT_GRACE_MS)
+    if (paraApagar.length) {
+      await Promise.all(paraApagar.map((p) => deleteProposal(p.id).catch((err) => console.error(err))))
+    }
+
+    // as intocadas somem da lista e das contas do gráfico imediatamente, apagadas ou não
+    setProposals(todas.filter((p) => !isUntouchedDraft(p)))
     setLoading(false)
   }
 
@@ -82,8 +94,6 @@ export default function Dashboard() {
   const filteredProposals = useMemo(() => {
     const q = search.trim().toLowerCase()
     return proposals.filter((p) => {
-      // rascunho vazio (recém-criado, sem nenhum dado preenchido ainda) não aparece na lista
-      if ((p.status || 'rascunho') === 'rascunho' && !hasAnyProjectData(p)) return false
       if (filterTipologia !== 'todas' && p.tipologia !== filterTipologia) return false
       if (filterStatus !== 'todas' && p.status !== filterStatus) return false
       if (q && !(p.name || '').toLowerCase().includes(q) && !(p.fields?.nomeCliente || '').toLowerCase().includes(q)) return false
@@ -260,9 +270,41 @@ function formatProposalDate(p) {
 }
 
 /** Um rascunho só deve aparecer na lista se a pessoa já começou a preencher alguma coisa */
-function hasAnyProjectData(p) {
-  const fields = p.fields || {}
-  return Object.values(fields).some((v) => String(v || '').trim() !== '')
+/**
+ * Prazo de carência antes de apagar um rascunho intocado. Serve para o caso de a pessoa ter
+ * acabado de criar a proposta e ainda estar preenchendo em outra aba: se apagássemos na hora,
+ * o próximo salvamento dela falharia (o documento já não existiria). Dentro desse prazo o
+ * rascunho apenas não aparece; passado o prazo, some de vez na próxima abertura do painel.
+ */
+const DRAFT_GRACE_MS = 10 * 60 * 1000
+
+/**
+ * Rascunho que nunca foi tocado: criado pelo botão "+ Nova proposta" e abandonado sem nenhuma
+ * alteração. Esses são apagados sozinhos — antes eles ficavam escondidos da lista mas ainda
+ * contavam no gráfico como "em andamento", inflando o número sem representar proposta nenhuma.
+ * Qualquer sinal de que a pessoa mexeu ali dentro (nome, tipologia, cores, campos, slides,
+ * vídeo ou mudança de status) já tira a proposta desta categoria.
+ */
+function isUntouchedDraft(p) {
+  if ((p.status || 'rascunho') !== 'rascunho') return false
+  const nome = (p.name || '').trim()
+  if (nome && nome !== 'Nova proposta') return false
+  if ((p.tipologia || 'residencial') !== 'residencial') return false
+  if (p.customSlides?.length || p.slideOrder?.length || p.hiddenSlides?.length) return false
+  if (p.slideOverrides && Object.keys(p.slideOverrides).length) return false
+  if (p.videoUrl || p.videoEmbedUrl || p.public) return false
+  if (p.acceptedValue != null || p.acceptedPackageId) return false
+  if (p.palette && DEFAULT_PALETTE.some((hex, i) => p.palette[i] !== hex)) return false
+  return !Object.values(p.fields || {}).some((v) => String(v || '').trim() !== '')
+}
+
+/** updatedAt pode vir como Timestamp do Firestore, objeto {seconds} ou string — normaliza. */
+function toMillis(ts) {
+  if (!ts) return 0
+  if (typeof ts.toMillis === 'function') return ts.toMillis()
+  if (typeof ts.seconds === 'number') return ts.seconds * 1000
+  const n = new Date(ts).getTime()
+  return Number.isNaN(n) ? 0 : n
 }
 
 function AcceptValueForm({ defaultValue, onConfirm }) {
