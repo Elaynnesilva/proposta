@@ -261,17 +261,45 @@ export default function Presenter() {
     return [...byId.values()]
   }, [templateContent, proposal?.tipologia, proposal?.customSlides])
 
+  /**
+   * Uma CÓPIA não guarda uma foto do slide original: guarda só { id, copyOf } mais o que foi
+   * editado nela. Na hora de montar, ela pega o slide de origem recém-construído e aplica as
+   * suas próprias mudanças por cima. Assim a cópia de um slide de pacotes continua mostrando
+   * os valores atuais do cliente, em vez de congelar os valores do dia em que foi copiada.
+   */
+  const copias = useMemo(() => customSlides.filter((c) => c.copyOf), [customSlides])
+
   const baseSlides = useMemo(() => {
     if (!proposal || !settings) return []
     return buildSlides({
       fields: proposal.fields || {},
       content, images, settings,
-      custom: customSlides,
+      custom: customSlides.filter((c) => !c.copyOf),
       videoUrl: resolvedVideoUrl,
       videoEmbedUrl: resolvedEmbedUrl,
       visibility: proposal.visibility || {},
     })
   }, [proposal, settings, templateContent, customSlides])
+
+  /** insere cada cópia logo abaixo do slide de origem, já com o conteúdo dele */
+  const baseSlidesComCopias = useMemo(() => {
+    if (!copias.length) return baseSlides
+    const saida = []
+    baseSlides.forEach((s) => {
+      saida.push(s)
+      copias.filter((c) => c.copyOf === s.id).forEach((c) => {
+        const { copyOf, id, ...edicoes } = c
+        saida.push({ ...s, ...edicoes, id, copyOf, isCopy: true })
+      })
+    })
+    // cópias cujo original foi ocultado ou não existe mais não podem sumir sem aviso
+    const jaIncluidas = new Set(saida.map((x) => x.id))
+    copias.forEach((c) => {
+      if (jaIncluidas.has(c.id)) return
+      saida.push({ ...c, type: c.type || 'custom', isCopy: true })
+    })
+    return saida
+  }, [baseSlides, copias])
 
   const slides = useMemo(() => {
     // ORDEM DE PRECEDÊNCIA das edições de slide, da mais geral para a mais específica:
@@ -282,7 +310,7 @@ export default function Presenter() {
     // É isso que faz uma foto colocada uma vez aparecer sozinha nas próximas propostas.
     const defaultsAll = templateContent?.slideDefaults?.all || {}
     const defaultsTipologia = templateContent?.slideDefaults?.[proposal?.tipologia] || {}
-    let list = baseSlides.map((s) => {
+    let list = baseSlidesComCopias.map((s) => {
       const base = { ...s, ...(defaultsAll[s.id] || {}), ...(defaultsTipologia[s.id] || {}) }
       const ov = proposal?.slideOverrides?.[s.id]
       const merged = { ...base, ...(ov || {}) }
@@ -311,7 +339,7 @@ export default function Presenter() {
       list = [...ordered, ...remaining]
     }
     return list
-  }, [baseSlides, templateContent, proposal?.tipologia, proposal?.slideOverrides, proposal?.slideOrder])
+  }, [baseSlidesComCopias, templateContent, proposal?.tipologia, proposal?.slideOverrides, proposal?.slideOrder])
 
   // páginas ocultadas pela pessoa ficam fora da apresentação e do PDF, mas continuam
   // listadas (esmaecidas) na barra lateral, prontas para serem reativadas quando quiser
@@ -408,7 +436,28 @@ export default function Presenter() {
     // slide extra salvo para as outras propostas: ele deixa de ser "desta proposta" e passa a
     // fazer parte do modelo (aparece sozinho nas próximas). Guardamos o slide inteiro, não só
     // o patch, porque ele não é montado a partir dos dados do projeto como os demais.
-    if (slideType === 'custom') {
+    // uma CÓPIA salva para as outras propostas: o conteúdo editado segue o caminho normal
+    // (vai pro padrão, mais abaixo), mas a existência dela — o par { id, copyOf } — também
+    // precisa ir pro modelo, senão a cópia continuaria existindo só nesta proposta e a
+    // pessoa salvaria "para todas" sem ela aparecer em lugar nenhum.
+    const copiaAtual = slides.find((x) => x.id === slideId && x.isCopy)
+    if (copiaAtual) {
+      const referencia = { id: slideId, copyOf: copiaAtual.copyOf }
+      updateProposal((prev) => ({
+        ...prev,
+        customSlides: (prev.customSlides || []).filter((c, i) => (c.id || `custom-${i}`) !== slideId),
+      }))
+      setTemplateContent((prev) => {
+        const todos = { ...(prev?.customSlides || {}) }
+        const lista = (todos[bucket] || []).filter((c) => c.id !== slideId)
+        todos[bucket] = [...lista, referencia]
+        const nextContent = { ...(prev || {}), customSlides: todos }
+        saveTemplateContent(nextContent).catch((err) => { console.error(err); alert(scopeSaveErrorMessage(err)) })
+        return nextContent
+      })
+    }
+
+    if (slideType === 'custom' && !copiaAtual) {
       const atual = slides.find((x) => x.id === slideId) || {}
       const completo = { ...atual, ...patch, id: slideId, type: 'custom' }
       delete completo.deadlines
@@ -603,6 +652,7 @@ export default function Presenter() {
    * lugares, senão ele voltaria a aparecer na próxima abertura.
    */
   function excluirSlideExtra(slideId) {
+    // vale para slides extras E para cópias: os dois moram na mesma lista
     setEditing(false)
     updateProposal((prev) => {
       const overrides = { ...(prev.slideOverrides || {}) }
@@ -630,6 +680,24 @@ export default function Presenter() {
       saveTemplateContent(nextContent).catch((err) => { console.error(err); alert(scopeSaveErrorMessage(err)) })
       return nextContent
     })
+  }
+
+  /**
+   * Duplica qualquer slide — inclusive os que vêm prontos. A cópia guarda só a referência ao
+   * original ({ copyOf }); tudo que for editado nela fica guardado junto e é aplicado por cima
+   * na hora de montar. Ela aparece logo abaixo do original, é editável e salvável como
+   * qualquer outra, e — por não ser um slide de fábrica — pode ser excluída.
+   */
+  function duplicarSlide(slideId) {
+    const original = slides.find((x) => x.id === slideId)
+    if (!original) return
+    const copia = {
+      id: `copia-${Date.now().toString(36)}`,
+      copyOf: original.copyOf || slideId,
+      title: original.title ? `${original.title} (cópia)` : 'Cópia',
+    }
+    updateProposal((prev) => ({ ...prev, customSlides: [...(prev.customSlides || []), copia] }))
+    setSlideNovoId(copia.id)
   }
 
   /** Cria um slide extra já dentro da apresentação, pula pra ele e abre a edição. */
@@ -666,7 +734,9 @@ export default function Presenter() {
           console.error('Falha ao capturar slide', i, slideErr)
           continue // pula esse slide em vez de derrubar o PDF inteiro
         }
-        const img = canvas.toDataURL('image/jpeg', 0.92)
+        // 0.95: as plantas têm linhas finas e texto pequeno, que o JPEG mais comprimido
+        // borrava — a diferença de tamanho do arquivo é pequena e a leitura melhora bastante
+        const img = canvas.toDataURL('image/jpeg', 0.95)
         if (!pdf) pdf = new jsPDF({ orientation: 'landscape', unit: 'px', format: [EXPORT_W, EXPORT_H] })
         else pdf.addPage([EXPORT_W, EXPORT_H], 'landscape')
         pdf.addImage(img, 'JPEG', 0, 0, EXPORT_W, EXPORT_H)
@@ -730,6 +800,9 @@ export default function Presenter() {
               )}
               {!isPublic && (
                 <button onClick={novoSlide} className="text-xs bg-white/10 px-3 py-1.5 rounded-full shrink-0">✚ Novo slide</button>
+              )}
+              {!isPublic && (
+                <button onClick={() => duplicarSlide(slide.id)} className="text-xs bg-white/10 px-3 py-1.5 rounded-full shrink-0">⧉ Duplicar</button>
               )}
               <button disabled={exporting} onClick={handleExportPdf} className="text-xs bg-white/10 px-3 py-1.5 rounded-full shrink-0 disabled:opacity-50">⇩ {exporting ? `Gerando… ${exportProgress}/${visibleSlides.length}` : 'Baixar PDF'}</button>
               {!isPublic && (
@@ -808,6 +881,9 @@ export default function Presenter() {
                   </button>
                   <button onClick={(e) => { e.stopPropagation(); novoSlide() }} className="text-xs bg-black/30 hover:bg-black/50 backdrop-blur px-2.5 sm:px-3 py-1.5 rounded-full transition shrink-0">
                     ✚<span className="hidden sm:inline"> Novo slide</span>
+                  </button>
+                  <button onClick={(e) => { e.stopPropagation(); duplicarSlide(slide.id) }} className="text-xs bg-black/30 hover:bg-black/50 backdrop-blur px-2.5 sm:px-3 py-1.5 rounded-full transition shrink-0">
+                    ⧉<span className="hidden sm:inline"> Duplicar</span>
                   </button>
                 </>
               )}
@@ -1269,6 +1345,7 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
   const [imageLayout, setImageLayout] = useState(slide.imageLayout || 'row')
   // com UMA foto só: embaixo do texto (padrão) ou ocupando a lateral, como nos slides de foto fixa
   const [imagePlacement, setImagePlacement] = useState(slide.imagePlacement || 'below')
+  const [imagesPerRow, setImagesPerRow] = useState(slide.imagesPerRow || '')
   const [adjustingIdx, setAdjustingIdx] = useState(null)
   const hasSingleImage = 'image' in slide && !isMultiImage && slide.type !== 'cover'
   const isCover = slide.type === 'cover'
@@ -1330,6 +1407,7 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
     setImages(effectiveImages(slide))
     setImageLayout(slide.imageLayout || 'row')
     setImagePlacement(slide.imagePlacement || 'below')
+    setImagesPerRow(slide.imagesPerRow || '')
     setEmbedUrl(slide.embedUrl || '')
     setAdjustingIdx(null)
     setSingleImage({ url: slide.image || '', posX: slide.imagePosX, posY: slide.imagePosY })
@@ -1418,7 +1496,7 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
     // As fotos seguem em base64 no estado local (pra aparecer na hora); quem troca por uma
     // referência curta antes de gravar é o updateProposal / saveTemplateContent.
     if (isMultiImage) {
-      Object.assign(patch, { images, imageLayout, imagePlacement, image: null, image2: null })
+      Object.assign(patch, { images, imageLayout, imagePlacement, imagesPerRow: Number(imagesPerRow) || null, image: null, image2: null })
       // a "Acompanhamento de obra" usa a descrição vinda de "Dados do projeto" (ver acima) —
       // não duplica aqui como override, senão o texto do campo nunca mais apareceria
       if (slide.id !== 'obra') patch.description = description
@@ -1813,11 +1891,23 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
                 </>
               ) : (
                 <>
-                  <div className="text-xs font-medium text-ink/70 block mb-1 mt-3">Organização das imagens</div>
-                  <div className="flex gap-2 mb-3">
-                    <button onClick={() => setImageLayout('row')} className={`text-xs px-3 py-1.5 rounded-full border ${imageLayout === 'row' ? 'bg-ink text-white border-ink' : 'border-line text-ink/70'}`}>Lado a lado</button>
-                    <button onClick={() => setImageLayout('grid')} className={`text-xs px-3 py-1.5 rounded-full border ${imageLayout === 'grid' ? 'bg-ink text-white border-ink' : 'border-line text-ink/70'}`}>Grade</button>
+                  <div className="text-xs font-medium text-ink/70 block mb-1 mt-3">Quantas imagens por fileira?</div>
+                  <div className="flex gap-2 mb-1 flex-wrap">
+                    {Array.from({ length: Math.min(images.length, 6) }, (_, k) => k + 1).map((v) => (
+                      <button
+                        key={v} onClick={() => setImagesPerRow(v)}
+                        className={`text-xs w-9 h-9 rounded-full border ${Number(imagesPerRow) === v ? 'bg-ink text-white border-ink' : 'border-line text-ink/70'}`}
+                      >{v}</button>
+                    ))}
+                    <button
+                      onClick={() => setImagesPerRow('')}
+                      className={`text-xs px-3 h-9 rounded-full border ${!imagesPerRow ? 'bg-ink text-white border-ink' : 'border-line text-ink/70'}`}
+                    >automático</button>
                   </div>
+                  <p className="text-[11px] text-muted mb-3">
+                    As que não couberem descem para a fileira de baixo, alinhadas pela esquerda com as de cima.
+                    Quanto mais fileiras, menores as fotos — o formato escolhido é sempre mantido.
+                  </p>
                 </>
               )}
               <div className="space-y-2 mb-3">
@@ -1883,7 +1973,7 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
       {uploadingCount > 0 && (
         <p className="text-xs text-clay mb-2">Processando imagem(ns)… um instante.</p>
       )}
-      {slide.type === 'custom' && onDeleteSlide && (
+      {(slide.isCopy || slide.type === 'custom') && onDeleteSlide && (
         <button
           onClick={() => { if (confirm('Excluir este slide? Ele sai desta proposta e também do modelo, se você tiver salvado para as outras propostas.')) onDeleteSlide(slide.id) }}
           className="w-full text-sm py-2.5 rounded-lg border border-red-200 text-red-600 mt-6 hover:bg-red-50"
@@ -2013,7 +2103,24 @@ function ScaledCanvas({ children, onClick }) {
  */
 function SlideImage({ src, className, style }) {
   if (!src) return <div className={className} style={{ background: 'transparent', ...style }} />
-  return <img src={src} alt="" crossOrigin="anonymous" className={`object-cover ${className}`} style={style} />
+  return <div className={className} style={{ ...style, ...coverBg(src, style?.objectPosition), objectPosition: undefined }} />
+}
+
+/**
+ * A foto é desenhada como FUNDO do quadradinho, e não como <img object-fit:cover>.
+ *
+ * Motivo: o gerador de PDF (html2canvas) não entende object-fit — ele redesenha a foto
+ * esticada até preencher o quadro, e era por isso que no PDF as imagens saíam achatadas ou
+ * alongadas enquanto na tela apareciam certas. background-size: cover ele entende, e o
+ * resultado no PDF fica idêntico ao da apresentação.
+ */
+function coverBg(src, objectPosition) {
+  return {
+    backgroundImage: `url("${src}")`,
+    backgroundSize: 'cover',
+    backgroundPosition: objectPosition || 'center',
+    backgroundRepeat: 'no-repeat',
+  }
 }
 
 // whiteSpace: 'pre-line' faz o Enter que a pessoa digitou no painel virar quebra de linha de
@@ -2124,7 +2231,7 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
               que aparece no cabeçalho da lista de propostas */}
           {(settings?.logoDataUrl || marca.length > 0) && (
             <div className="absolute z-10 top-10 left-10 flex items-center gap-4">
-              {settings?.logoDataUrl && <img src={settings.logoDataUrl} alt="logo" className="h-16 w-16 object-cover rounded-full" />}
+              {settings?.logoDataUrl && <div className="h-16 w-16 rounded-full shrink-0" style={coverBg(settings.logoDataUrl)} />}
               {marca.length > 0 && (
                 <div className="leading-tight">
                   {settings?.professionalName && (
@@ -2137,13 +2244,14 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
               )}
             </div>
           )}
-          <div className="relative z-10 p-20 max-w-3xl">
+          <div className="relative z-10 p-20">
             {/* 'pre' = não quebra sozinho pela largura; só quebra onde a pessoa apertou Enter */}
             {slide.kicker && <div className="text-xs tracking-[0.2em] uppercase mb-4" style={{ color: corKicker, whiteSpace: 'pre' }}>{slide.kicker}</div>}
-            <h1 className="text-5xl mb-6" style={{ ...titleStyle, color: corTitulo }}>{slide.title}</h1>
+            {/* 'pre' = não quebra sozinho pela largura; quebra só onde a pessoa apertou Enter */}
+            <h1 className="text-5xl mb-6" style={{ ...titleStyle, color: corTitulo, whiteSpace: 'pre' }}>{slide.title}</h1>
             {/* sem animação na capa, a pedido — o texto aparece pronto, junto com o slide */}
             {slide.items.map((it, i) => (
-              <p key={i} className="text-lg mb-2 max-w-xl whitespace-pre-line" style={{ color: corCorpo, opacity: 0.85 }}>{it}</p>
+              <p key={i} className="text-lg mb-2 max-w-2xl whitespace-pre-line" style={{ color: corCorpo, opacity: 0.85 }}>{it}</p>
             ))}
           </div>
         </div>
@@ -2293,7 +2401,7 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
                     ))}
                   </div>
                 )}
-                {s.image && <img src={s.image} alt="" crossOrigin="anonymous" className="mt-auto w-full aspect-square object-cover rounded-md" style={{ objectPosition: `${s.posX ?? 50}% ${s.posY ?? 50}%` }} />}
+                {s.image && <div className="mt-auto w-full aspect-square rounded-md" style={coverBg(s.image, `${s.posX ?? 50}% ${s.posY ?? 50}%`)} />}
               </Reveal>
             ))}
           </div>
@@ -2311,11 +2419,11 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
             {slide.items.map((fb, i) => (
               <Reveal key={i} i={i} revealCount={revealCount} className="overflow-hidden" style={{ borderRadius: radius, background: heading === '#FFFFFF' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)' }}>
                 {fb.printUrl ? (
-                  <img src={fb.printUrl} alt="" crossOrigin="anonymous" className="w-full h-full object-cover" style={{ objectPosition: `${fb.printPosX ?? 50}% ${fb.printPosY ?? 50}%` }} />
+                  <div className="w-full h-full" style={coverBg(fb.printUrl, `${fb.printPosX ?? 50}% ${fb.printPosY ?? 50}%`)} />
                 ) : (
                   <div className="p-5">
                     <div className="flex items-center gap-3 mb-3">
-                      {fb.photoUrl && <img src={fb.photoUrl} crossOrigin="anonymous" className="w-9 h-9 rounded-full object-cover" alt="" style={{ objectPosition: `${fb.photoPosX ?? 50}% ${fb.photoPosY ?? 50}%` }} />}
+                      {fb.photoUrl && <div className="w-9 h-9 rounded-full shrink-0" style={coverBg(fb.photoUrl, `${fb.photoPosX ?? 50}% ${fb.photoPosY ?? 50}%`)} />}
                       <div className="text-base font-semibold" style={{ color: c1 }}>{fb.name}</div>
                     </div>
                     <div className="text-base" style={{ color: heading, opacity: 0.85 }}>{fb.text}</div>
@@ -2379,7 +2487,7 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
                       {pkg.benefits.map((b, k) => <li key={k}>• {b}</li>)}
                     </ul>
                   )}
-                  {extra?.image && <img src={extra.image} alt="" className="w-full object-cover rounded-lg mb-3 mt-auto" style={{ height: '190px', objectPosition: `${extra.posX ?? 50}% ${extra.posY ?? 50}%` }} />}
+                  {extra?.image && <div className="w-full rounded-lg mb-3 mt-auto" style={{ height: '190px', ...coverBg(extra.image, `${extra.posX ?? 50}% ${extra.posY ?? 50}%`) }} />}
                   {!slide.hideDescriptions && extra?.description && <div className="text-base mt-auto pt-2" style={{ color: heading, opacity: 0.85 }}>{extra.description}</div>}
                 </Reveal>
               )
@@ -2547,7 +2655,7 @@ function JourneyFlowSlide({ slide, c1, c2, t2, revealCount, radius }) {
             >
               <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold leading-none mb-2 shrink-0" style={{ background: c1, color: readableTextColor(c1) }}><span className="translate-y-px">{i + 1}</span></div>
               <div className="text-base leading-snug mb-2">{it}</div>
-              {stepImages[i]?.url && <img src={stepImages[i].url} alt="" crossOrigin="anonymous" className="w-full h-20 object-cover rounded-md" style={{ objectPosition: `${stepImages[i].posX ?? 50}% ${stepImages[i].posY ?? 50}%` }} />}
+              {stepImages[i]?.url && <div className="w-full h-20 rounded-md" style={coverBg(stepImages[i].url, `${stepImages[i].posX ?? 50}% ${stepImages[i].posY ?? 50}%`)} />}
             </div>
             {i < slide.items.length - 1 && <div className="block text-2xl" style={{ color: c1 }}>→</div>}
           </Reveal>
@@ -2700,7 +2808,7 @@ function TopicImageSlide({ slide, c1, revealCount, radius }) {
           tela), então as fotos nunca crescem além dela nem ficam por cima do resto.
           Cada foto respeita o formato escolhido (1:1, 4:5, 16:9...) e nunca ultrapassa
           o espaço da sua célula — com muitas fotos, quebra em grade (3 em cima, 3 embaixo). */}
-      {hasImages && <ImageStrip imgs={imgs} layout={layout} revealCount={revealCount} radius={radius} />}
+      {hasImages && <ImageStrip imgs={imgs} layout={layout} perRow={slide.imagesPerRow} revealCount={revealCount} radius={radius} />}
     </div>
   )
 }
@@ -2716,16 +2824,20 @@ function TopicImageSlide({ slide, c1, revealCount, radius }) {
  * na largura OU na altura da célula, o que vier primeiro. As fotos ficam encostadas à
  * esquerda, alinhadas com o título e os tópicos acima delas.
  */
-function ImageStrip({ imgs, layout, revealCount, radius }) {
+function ImageStrip({ imgs, layout, perRow, revealCount, radius }) {
   const ref = useRef(null)
   const [box, setBox] = useState({ w: 0, h: 0 })
 
   useEffect(() => {
     const el = ref.current
     if (!el) return
+    // offsetWidth/Height e NÃO getBoundingClientRect: o slide inteiro é desenhado em 1600x900
+    // e depois encolhido (ou ampliado) por um transform: scale para caber na tela. O
+    // getBoundingClientRect devolve o tamanho JÁ escalado — e esse número, aplicado de volta
+    // dentro do canvas, era multiplicado pela escala outra vez. Em telas grandes, onde a
+    // escala passa de 1, as fotos saíam maiores que o espaço e invadiam o texto.
     const medir = () => {
-      const r = el.getBoundingClientRect()
-      if (r.width && r.height) setBox({ w: r.width, h: r.height })
+      if (el.offsetWidth && el.offsetHeight) setBox({ w: el.offsetWidth, h: el.offsetHeight })
     }
     medir()
     let ro
@@ -2735,8 +2847,10 @@ function ImageStrip({ imgs, layout, revealCount, radius }) {
 
   const GAP = 16
   const n = imgs.length
-  // "lado a lado" é sempre uma única fileira; "grade" nunca passa de 3 fotos por fileira
-  const cols = layout === 'row' ? n : Math.min(n, 3)
+  // quantas fotos por fileira: a pessoa escolhe na edição. Sem escolha, mantém o antigo
+  // ("lado a lado" = todas numa fileira; "grade" = até 3 por fileira)
+  const escolhido = Number(perRow) > 0 ? Number(perRow) : 0
+  const cols = Math.max(1, Math.min(escolhido || (layout === 'row' ? n : Math.min(n, 3)), n))
   const rows = Math.ceil(n / cols)
   const cellW = box.w ? (box.w - GAP * (cols - 1)) / cols : 0
   const cellH = box.h ? (box.h - GAP * (rows - 1)) / rows : 0
