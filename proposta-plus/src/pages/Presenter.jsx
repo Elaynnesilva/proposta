@@ -910,6 +910,8 @@ function effectiveImages(slide) {
 }
 
 const RATIO_CSS = { '1:1': '1 / 1', '4:5': '4 / 5', '5:4': '5 / 4', '9:16': '9 / 16', '16:9': '16 / 9' }
+/** o mesmo formato como número (largura ÷ altura), pra calcular o tamanho das fotos em JS */
+const RATIO_NUM = { '1:1': 1, '4:5': 0.8, '5:4': 1.25, '9:16': 9 / 16, '16:9': 16 / 9 }
 
 /* ---------------- BARRA LATERAL DE SLIDES ---------------- */
 
@@ -1221,6 +1223,7 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
   const isCover = slide.type === 'cover'
   // a foto única agora carrega o enquadramento junto ({ url, posX, posY }) — é o mesmo
   // objeto usado pelo SingleImageField em todos os outros lugares do painel
+  const [kicker, setKicker] = useState(slide.kicker || '')
   const [coverImage, setCoverImage] = useState({ url: slide.image || '', posX: slide.imagePosX, posY: slide.imagePosY })
   const [singleImage, setSingleImage] = useState({ url: slide.image || '', posX: slide.imagePosX, posY: slide.imagePosY })
   const [noImage, setNoImage] = useState(!!slide.noImage)
@@ -1244,6 +1247,7 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
   const isVideo = slide.type === 'video'
   const [embedUrl, setEmbedUrl] = useState(slide.embedUrl || '')
   const [uploadingCount, setUploadingCount] = useState(0)
+  const [scopePopup, setScopePopup] = useState(false)
 
   /** Comprime a foto e devolve o base64 pronto pra pré-visualizar aqui no painel — bem rápido,
    *  tudo local, sem rede. O envio de verdade pro Firestore só acontece quando a pessoa aperta
@@ -1279,6 +1283,7 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
     setSingleImage({ url: slide.image || '', posX: slide.imagePosX, posY: slide.imagePosY })
     setNoImage(!!slide.noImage)
     setImagePosition(slide.imagePosition || 'left')
+    setKicker(slide.kicker || '')
     setCoverImage({ url: slide.image || '', posX: slide.imagePosX, posY: slide.imagePosY })
     setObjetivoProjeto(slide.objetivoProjeto || '')
     setHidePayments(!!slide.hidePayments)
@@ -1304,10 +1309,20 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
     })
   }
 
-  function save() {
+  /**
+   * "Salvar" nunca grava direto: abre o pop-up perguntando onde a edição deve valer. A
+   * pergunta aparece SEMPRE, em todos os slides e em toda edição — antes ela ficava no alto
+   * do painel, fora do campo de visão de quem rolou até o fim, e era fácil salvar sem
+   * perceber qual opção estava marcada. A última escolha vem pré-marcada só para poupar
+   * cliques; a confirmação continua sendo obrigatória.
+   */
+  function save() { setScopePopup(true) }
+
+  function aplicarSalvamento(escopoEscolhido) {
+    setScopePopup(false)
     if (isVideo) {
-      guardarEscopo(VIDEO_SCOPE_KEY, videoScope)
-      onSaveVideoScope?.(videoScope, { videoUrl: '', videoPath: '', embedUrl: toEmbedUrl(embedUrl) })
+      guardarEscopo(VIDEO_SCOPE_KEY, escopoEscolhido)
+      onSaveVideoScope?.(escopoEscolhido, { videoUrl: '', videoPath: '', embedUrl: toEmbedUrl(embedUrl) })
       onClose()
       return
     }
@@ -1360,12 +1375,12 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
       Object.assign(patch, { image: singleImage.url || '', imagePosX: singleImage.posX ?? 50, imagePosY: singleImage.posY ?? 50, noImage, imagePosition })
       if (slide.type === 'scopeSplit' && slide.id !== 'obra') patch.description = description
     }
-    if (isCover) Object.assign(patch, { image: coverImage.url || '', imagePosX: coverImage.posX ?? 50, imagePosY: coverImage.posY ?? 50 })
+    if (isCover) Object.assign(patch, { kicker, image: coverImage.url || '', imagePosX: coverImage.posX ?? 50, imagePosY: coverImage.posY ?? 50 })
     if (slide.type === 'journeyFlow') patch.stepImages = stepImages
     if (COLOR_CUSTOMIZABLE_TYPES.has(slide.type)) Object.assign(patch, { bgColor, textColor })
 
-    guardarEscopo(SCOPE_KEY, scope)
-    onSave(patch, scope)
+    guardarEscopo(SCOPE_KEY, escopoEscolhido)
+    onSave(patch, escopoEscolhido)
     onClose()
   }
 
@@ -1376,44 +1391,24 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
         <button onClick={onClose} className="text-muted text-sm">✕</button>
       </div>
 
-      {allowGlobal && !isVideo ? (
-        <div className="mb-5 border border-line rounded-lg p-3 bg-sand">
-          <div className="text-xs font-medium text-ink mb-2">Aplicar esta edição (textos, fotos e cores) em:</div>
-          <label className="flex items-center gap-2 text-sm mb-1.5 cursor-pointer">
-            <input type="radio" checked={scope === 'allTypes'} onChange={() => setScope('allTypes')} />
-            Todas as propostas, de todos os tipos
-          </label>
-          <label className="flex items-center gap-2 text-sm mb-1.5 cursor-pointer">
-            <input type="radio" checked={scope === 'tipologia'} onChange={() => setScope('tipologia')} />
-            Só nas propostas do tipo {TIPOLOGIA_LABEL[proposal?.tipologia] || proposal?.tipologia || 'atual'}
-          </label>
-          <label className="flex items-center gap-2 text-sm cursor-pointer">
-            <input type="radio" checked={scope === 'proposal'} onChange={() => setScope('proposal')} />
-            Só nesta proposta
-          </label>
-          <p className="text-[11px] text-muted mt-2">
-            Nas duas primeiras opções, o que você salvar aqui já aparece sozinho nas próximas propostas que criar.
-          </p>
-          {CLIENT_FIELDS_BY_SLIDE[slide.id] && scope !== 'proposal' && (
-            <p className="text-[11px] text-muted mt-1.5">
-              A foto e as cores desta página vão para as outras propostas; o texto com o nome e o objetivo do cliente fica só nesta.
-            </p>
-          )}
-        </div>
-      ) : isVideo ? null : (
-        <p className="text-xs text-muted mb-4">Este é um slide extra que você criou dentro desta proposta, então a edição vale só para ela.</p>
-      )}
-
       <label className="text-xs font-medium text-ink/70 block mb-1">Título</label>
       <input value={title} onChange={(e) => setTitle(e.target.value)} className="w-full text-sm p-2.5 rounded-lg border border-line outline-none focus:border-clay mb-4" />
 
       {isCover && (
-        <div className="mb-4">
-          <SingleImageField
-            label="Imagem de fundo da capa"
-            value={coverImage} onChange={setCoverImage} onPickFile={handleImageFile}
+        <>
+          <label className="text-xs font-medium text-ink/70 block mb-1">Texto pequeno acima do título</label>
+          <input
+            value={kicker} onChange={(e) => setKicker(e.target.value)}
+            placeholder="Ex: Apresentação de proposta de projeto"
+            className="w-full text-sm p-2.5 rounded-lg border border-line outline-none focus:border-clay mb-4"
           />
-        </div>
+          <div className="mb-4">
+            <SingleImageField
+              label="Imagem de fundo da capa"
+              value={coverImage} onChange={setCoverImage} onPickFile={handleImageFile}
+            />
+          </div>
+        </>
       )}
 
       {isPackagesSummary && (
@@ -1487,7 +1482,7 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
           <label className="text-xs font-medium text-ink/70 block mb-1 mt-3">Cor do texto</label>
           <ColorSwatchRow palette={palette} value={textColor} onChange={setTextColor} />
           <p className="text-[11px] text-muted mt-1">A cor escolhida vale também para o título. Se ficar difícil de ler sobre o fundo, o sistema clareia ou escurece o mesmo tom até dar contraste.</p>
-          {isCover && <p className="text-[11px] text-muted mt-1">Na capa, estas cores aparecem quando ela está sem foto de fundo.</p>}
+          {isCover && <p className="text-[11px] text-muted mt-1">Na capa, a cor do texto vale também sobre a foto de fundo. Sem cor escolhida, o texto volta a ser branco.</p>}
           <div className="mb-4" />
         </>
       )}
@@ -1528,22 +1523,6 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
 
       {isVideo && (
         <div className="mb-4">
-          <div className="mb-3 border border-line rounded-lg p-3 bg-sand">
-            <div className="text-xs font-medium text-ink mb-2">Este vídeo vale para:</div>
-            <label className="flex items-center gap-2 text-sm mb-1.5 cursor-pointer">
-              <input type="radio" checked={videoScope === 'proposal'} onChange={() => setVideoScope('proposal')} />
-              Só esta proposta
-            </label>
-            <label className="flex items-center gap-2 text-sm mb-1.5 cursor-pointer">
-              <input type="radio" checked={videoScope === 'tipologia'} onChange={() => setVideoScope('tipologia')} />
-              Este tipo de projeto ({proposal?.tipologia}), em todos os clientes
-            </label>
-            <label className="flex items-center gap-2 text-sm cursor-pointer">
-              <input type="radio" checked={videoScope === 'allTypes'} onChange={() => setVideoScope('allTypes')} />
-              Todos os tipos de projeto
-            </label>
-          </div>
-
           <label className="text-xs font-medium text-ink/70 block mb-1">Link de incorporação (YouTube/Vimeo, modo "embed")</label>
           <p className="text-[11px] text-muted mb-2">Suba o vídeo como "não listado" no YouTube e cole aqui o link no formato .../embed/...</p>
           <input
@@ -1834,6 +1813,58 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
         <button onClick={onClose} className="flex-1 text-sm py-2.5 rounded-lg border border-line text-muted">Cancelar</button>
         <button onClick={save} disabled={uploadingCount > 0} className="flex-1 text-sm py-2.5 rounded-lg bg-clay text-white font-medium disabled:opacity-50">{uploadingCount > 0 ? 'Salvando…' : 'Salvar'}</button>
       </div>
+
+      {scopePopup && (
+        <ScopePopup
+          slide={slide}
+          proposal={proposal}
+          isVideo={isVideo}
+          value={isVideo ? videoScope : scope}
+          onChange={isVideo ? setVideoScope : setScope}
+          onConfirm={aplicarSalvamento}
+          onCancel={() => setScopePopup(false)}
+        />
+      )}
+    </div>
+  )
+}
+
+/** Pop-up que aparece a cada "Salvar": onde esta edição deve valer. */
+function ScopePopup({ slide, proposal, isVideo, value, onChange, onConfirm, onCancel }) {
+  const opcoes = [
+    ['allTypes', 'Todas as propostas, de todos os tipos'],
+    ['tipologia', `Só nas propostas do tipo ${TIPOLOGIA_LABEL[proposal?.tipologia] || proposal?.tipologia || 'atual'}`],
+    ['proposal', 'Só nesta proposta'],
+  ]
+  return (
+    <div className="no-print fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-6" onClick={onCancel}>
+      <div className="bg-white text-ink rounded-xl p-5 w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
+        <h3 className="font-medium mb-1">Onde salvar esta edição?</h3>
+        <p className="text-xs text-muted mb-3">
+          {isVideo ? 'Este vídeo vale para:' : 'Aplicar esta edição (textos, fotos e cores) em:'}
+        </p>
+        {opcoes.map(([id, label]) => (
+          <label
+            key={id}
+            className={`flex items-center gap-2 text-sm p-2.5 mb-1.5 rounded-lg border cursor-pointer transition ${value === id ? 'border-clay bg-sand' : 'border-line'}`}
+          >
+            <input type="radio" checked={value === id} onChange={() => onChange(id)} />
+            {label}
+          </label>
+        ))}
+        <p className="text-[11px] text-muted mt-2">
+          Nas duas primeiras opções, o que você salvar aqui já aparece sozinho nas próximas propostas que criar.
+        </p>
+        {!isVideo && CLIENT_FIELDS_BY_SLIDE[slide.id] && value !== 'proposal' && (
+          <p className="text-[11px] text-muted mt-1.5">
+            A foto e as cores desta página vão para as outras propostas; o texto com o nome e o objetivo do cliente fica só nesta.
+          </p>
+        )}
+        <div className="flex gap-2 mt-4">
+          <button onClick={onCancel} className="flex-1 text-sm py-2.5 rounded-lg border border-line text-muted">Voltar</button>
+          <button onClick={() => onConfirm(value)} className="flex-1 text-sm py-2.5 rounded-lg bg-clay text-white font-medium">Salvar aqui</button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -1988,7 +2019,16 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
       // o degradê existe só para dar contraste ao texto POR CIMA da foto. Sem foto, ele
       // deixava a capa com um cinza esquisito de cima a baixo — então some junto, e a capa
       // vira uma página de cor sólida, com fundo e texto escolhidos na edição do slide.
-      const { bg, heading, titleColor } = slideColors(slide, INK, c1)
+      const { bg } = slideColors(slide, INK, c1)
+      // com foto, o texto fica sobre a parte escura do degradê — então o contraste da cor
+      // escolhida é conferido contra esse escuro, e não contra a cor de fundo do slide (que
+      // nem aparece). Sem cor escolhida, volta ao padrão: branco no título, destaque no kicker.
+      const fundoDoTexto = temFoto ? '#101418' : bg
+      const escolhida = slide.textColor ? (adjustForContrast(slide.textColor, fundoDoTexto) || null) : null
+      const corTitulo = escolhida || (temFoto ? '#FFFFFF' : titleColorFor(c1, bg))
+      const corKicker = escolhida || (temFoto ? c1 : titleColorFor(c1, bg))
+      const corCorpo = escolhida || (temFoto ? '#FFFFFF' : readableTextColor(bg))
+      const marca = [settings?.professionalName, settings?.companyName].filter(Boolean)
       return (
         <div className="w-full h-full relative flex items-end" style={temFoto ? undefined : { background: bg }}>
           {temFoto && (
@@ -1997,15 +2037,29 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
               <div className="absolute inset-0" style={{ background: 'linear-gradient(0deg, rgba(0,0,0,0.8) 10%, rgba(0,0,0,0.15) 60%, rgba(0,0,0,0.4) 100%)' }} />
             </>
           )}
-          {settings?.logoDataUrl && (
-            <img src={settings.logoDataUrl} alt="logo" className="absolute z-10 top-10 left-10 h-16 object-contain" />
+          {/* marca no topo: o mesmo conjunto logo + nome do profissional + nome do escritório
+              que aparece no cabeçalho da lista de propostas */}
+          {(settings?.logoDataUrl || marca.length > 0) && (
+            <div className="absolute z-10 top-10 left-10 flex items-center gap-4">
+              {settings?.logoDataUrl && <img src={settings.logoDataUrl} alt="logo" className="h-16 w-16 object-cover rounded-full" />}
+              {marca.length > 0 && (
+                <div className="leading-tight">
+                  {settings?.professionalName && (
+                    <div className="text-2xl" style={{ ...titleStyle, color: temFoto ? '#FFFFFF' : corTitulo }}>{settings.professionalName}</div>
+                  )}
+                  {settings?.companyName && (
+                    <div className="text-base" style={{ color: corCorpo, opacity: 0.75 }}>{settings.companyName}</div>
+                  )}
+                </div>
+              )}
+            </div>
           )}
           <div className="relative z-10 p-20 max-w-3xl">
-            <div className="text-xs tracking-[0.2em] uppercase mb-4" style={{ color: temFoto ? c1 : titleColor }}>{slide.kicker}</div>
-            <h1 className="text-5xl mb-6" style={{ ...titleStyle, color: temFoto ? '#FFFFFF' : titleColor }}>{slide.title}</h1>
+            {slide.kicker && <div className="text-xs tracking-[0.2em] uppercase mb-4" style={{ color: corKicker }}>{slide.kicker}</div>}
+            <h1 className="text-5xl mb-6" style={{ ...titleStyle, color: corTitulo }}>{slide.title}</h1>
             {/* sem animação na capa, a pedido — o texto aparece pronto, junto com o slide */}
             {slide.items.map((it, i) => (
-              <p key={i} className="text-lg mb-2 max-w-xl" style={{ color: temFoto ? 'rgba(255,255,255,0.85)' : heading, opacity: temFoto ? 1 : 0.85 }}>{it}</p>
+              <p key={i} className="text-lg mb-2 max-w-xl" style={{ color: corCorpo, opacity: 0.85 }}>{it}</p>
             ))}
           </div>
         </div>
@@ -2526,57 +2580,71 @@ function TopicImageSlide({ slide, c1, revealCount, radius }) {
           tela), então as fotos nunca crescem além dela nem ficam por cima do resto.
           Cada foto respeita o formato escolhido (1:1, 4:5, 16:9...) e nunca ultrapassa
           o espaço da sua célula — com muitas fotos, quebra em grade (3 em cima, 3 embaixo). */}
-      {hasImages && (
-        // com UMA foto só o comportamento é outro: ela não estica pra largura inteira da
-        // página (era isso que fazia o formato escolhido não mudar nada e a foto sair sempre
-        // enorme). A altura passa a ser a da faixa disponível e a LARGURA vem do formato —
-        // e a foto fica encostada à esquerda, alinhada com o texto acima dela.
-        <div className={`min-h-0 flex items-center ${imgs.length === 1 ? 'justify-start' : 'justify-center'}`}>
-          {imgs.length === 1 ? (
-            <div
-              className="relative overflow-hidden h-full"
-              style={{
-                borderRadius: radius,
-                ...(imgs[0].ratio
-                  ? { aspectRatio: RATIO_CSS[imgs[0].ratio], width: 'auto' }
-                  : { width: '50%' }),
-              }}
-            >
-              <Reveal i={0} revealCount={revealCount} className="absolute inset-0">
-                <SlideImage src={imgs[0].url} className="w-full h-full" style={{ objectPosition: `${imgs[0].posX ?? 50}% ${imgs[0].posY ?? 50}%` }} />
+      {hasImages && <ImageStrip imgs={imgs} layout={layout} revealCount={revealCount} radius={radius} />}
+    </div>
+  )
+}
+
+/**
+ * Faixa de fotos das seções de escopo, da modelagem 3D e dos slides extras.
+ *
+ * O tamanho de cada foto é CALCULADO aqui, em vez de deixado para o CSS. Motivo: antes a
+ * largura vinha da coluna do grid (100%) e a altura saía do formato escolhido — mas a faixa
+ * tem altura limitada, então a altura era cortada e o formato deixava de valer com mais de
+ * uma foto (1:1 não virava quadrado). Agora medimos o espaço disponível, dividimos em células
+ * e encaixamos cada foto dentro da sua célula respeitando o formato: a foto cresce até bater
+ * na largura OU na altura da célula, o que vier primeiro. As fotos ficam encostadas à
+ * esquerda, alinhadas com o título e os tópicos acima delas.
+ */
+function ImageStrip({ imgs, layout, revealCount, radius }) {
+  const ref = useRef(null)
+  const [box, setBox] = useState({ w: 0, h: 0 })
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const medir = () => {
+      const r = el.getBoundingClientRect()
+      if (r.width && r.height) setBox({ w: r.width, h: r.height })
+    }
+    medir()
+    let ro
+    if (typeof ResizeObserver !== 'undefined') { ro = new ResizeObserver(medir); ro.observe(el) }
+    return () => ro?.disconnect()
+  }, [])
+
+  const GAP = 16
+  const n = imgs.length
+  // "lado a lado" é sempre uma única fileira; "grade" nunca passa de 3 fotos por fileira
+  const cols = layout === 'row' ? n : Math.min(n, 3)
+  const rows = Math.ceil(n / cols)
+  const cellW = box.w ? (box.w - GAP * (cols - 1)) / cols : 0
+  const cellH = box.h ? (box.h - GAP * (rows - 1)) / rows : 0
+
+  function tamanho(img) {
+    if (!cellW || !cellH) return { width: '100%', height: '100%' }
+    const r = RATIO_NUM[img.ratio]
+    // sem formato escolhido a foto ocupa a célula inteira (com uma foto só, metade da
+    // largura, pra não ficar um retângulo gigante atravessando a página)
+    if (!r) return { width: n === 1 ? cellW / 2 : cellW, height: cellH }
+    const width = Math.min(cellW, cellH * r)
+    return { width, height: width / r }
+  }
+
+  return (
+    <div ref={ref} className="min-h-0 w-full h-full">
+      <div className="flex flex-wrap content-start justify-start" style={{ gap: GAP, height: '100%' }}>
+        {imgs.map((img, i) => {
+          const { width, height } = tamanho(img)
+          return (
+            <div key={i} className="relative overflow-hidden" style={{ borderRadius: radius, width, height }}>
+              <Reveal i={i} revealCount={revealCount} className="absolute inset-0">
+                <SlideImage src={img.url} className="w-full h-full" style={{ objectPosition: `${img.posX ?? 50}% ${img.posY ?? 50}%` }} />
               </Reveal>
             </div>
-          ) : (
-            <div
-              className="grid gap-4 w-full h-full"
-              style={(() => {
-                const n = imgs.length
-                // "lado a lado" é sempre uma única fileira; "grade" nunca passa de 3 fotos por
-                // fileira (3 em cima, 3 embaixo, etc.), como pedido — assim nunca fica apertado
-                const cols = layout === 'row' ? n : Math.min(n, 3)
-                const rows = Math.ceil(n / cols)
-                return { gridTemplateColumns: `repeat(${cols}, 1fr)`, gridTemplateRows: `repeat(${rows}, 1fr)`, alignItems: 'center' }
-              })()}
-            >
-              {imgs.map((img, i) => (
-                <div
-                  key={i}
-                  className="relative overflow-hidden w-full"
-                  // largura 100% da coluna do grid (valor definido) + aspect-ratio calcula a
-                  // altura A PARTIR dela — assim o formato (1:1, 4:5, 16:9...) é respeitado de
-                  // verdade. Antes a altura vinha primeiro e a largura ficava sobrando ou
-                  // faltando espaço, distorcendo o formato escolhido (ex: 16:9 saía quase quadrado).
-                  style={{ borderRadius: radius, aspectRatio: RATIO_CSS[img.ratio] || '1 / 1', maxHeight: '100%' }}
-                >
-                  <Reveal i={i} revealCount={revealCount} className="absolute inset-0">
-                    <SlideImage src={img.url} className="w-full h-full" style={{ objectPosition: `${img.posX ?? 50}% ${img.posY ?? 50}%` }} />
-                  </Reveal>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+          )
+        })}
+      </div>
     </div>
   )
 }
