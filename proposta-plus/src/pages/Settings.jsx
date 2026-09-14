@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { getSettings, saveSettings, getTemplateContent, saveTemplateContent, listProposals, saveProposal } from '../lib/db'
+import { getSettings, saveSettings, getTemplateContent, saveTemplateContent, listProposals, saveProposal, getProposal } from '../lib/db'
 import { DEFAULT_SHARED_TEXT, DEFAULT_IMAGES, TIPOLOGIAS } from '../lib/content'
 
 const TABS = [
@@ -232,16 +232,39 @@ function collectProposalImages(proposal, onSave) {
 
 function ImagensDaPropostaTab() {
   const [proposals, setProposals] = useState(null)
+  const [templateImages, setTemplateImages] = useState(null)
   const [openTipologia, setOpenTipologia] = useState('residencial')
 
-  useEffect(() => { refresh() }, [])
+  useEffect(() => { refresh() }, [openTipologia])
 
+  /**
+   * As fotos não são guardadas dentro do documento da proposta: lá fica só uma referência
+   * curta ("firestoremedia://…"), e a foto de verdade vem de uma subcoleção. listProposals
+   * devolve o documento cru (é o que o painel de propostas precisa, e buscar todas as fotos
+   * ali seria lento), então as miniaturas apareciam quebradas aqui. Por isso recarregamos
+   * com getProposal — que troca as referências pelas fotos — só as propostas da tipologia
+   * aberta, e só quando esta aba está na tela.
+   */
   async function refresh() {
-    setProposals(await listProposals())
+    setProposals(null)
+    const todas = await listProposals()
+    const daTipologia = todas.filter((p) => p.tipologia === openTipologia)
+    const completas = await Promise.all(daTipologia.map((p) => getProposal(p.id).catch(() => null)))
+    setProposals(completas.filter(Boolean))
+    // fotos salvas "para todas as propostas" (ou para um tipo) não ficam na proposta, e sim
+    // no conteúdo do modelo — elas também aparecem aqui, marcadas como padrão
+    setTemplateImages(await getTemplateContent().catch(() => null))
   }
 
   async function savePatch(proposal, patch) {
     await saveProposal({ ...proposal, ...patch })
+    refresh()
+  }
+
+  async function saveTemplatePatch(bucket, slideDefaults) {
+    const next = { ...(templateImages || {}), slideDefaults }
+    setTemplateImages(next)
+    await saveTemplateContent(next)
     refresh()
   }
 
@@ -262,37 +285,61 @@ function ImagensDaPropostaTab() {
         ))}
       </div>
 
-      {proposals.filter((p) => p.tipologia === openTipologia).map((p) => {
+      {['all', openTipologia].map((bucket) => {
+        const defaults = templateImages?.slideDefaults?.[bucket] || {}
+        const imagens = collectProposalImages({ slideOverrides: defaults }, (patch) =>
+          saveTemplatePatch(bucket, { ...(templateImages?.slideDefaults || {}), [bucket]: patch.slideOverrides })
+        )
+        if (imagens.length === 0) return null
+        return (
+          <div key={bucket} className="mb-8">
+            <h3 className="text-sm font-medium text-ink mb-1">
+              {bucket === 'all' ? 'Padrão — todas as propostas' : `Padrão — propostas do tipo ${TIPOLOGIA_LABELS[bucket] || bucket}`}
+            </h3>
+            <p className="text-[11px] text-muted mb-3">Trocar aqui muda em todas as propostas que usam este padrão.</p>
+            <ImageGrid images={imagens} />
+          </div>
+        )
+      })}
+
+      {proposals.map((p) => {
         const images = collectProposalImages(p, (patch) => savePatch(p, patch))
         if (images.length === 0) return null
         return (
           <div key={p.id} className="mb-8">
             <h3 className="text-sm font-medium text-ink mb-3">{p.name || 'Sem nome'}</h3>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              {images.map((img) => (
-                <label key={img.key} className="cursor-pointer group">
-                  <div className="relative">
-                    <img src={img.url} alt="" className="w-full aspect-square object-cover rounded-lg border border-line" />
-                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition rounded-lg flex items-center justify-center">
-                      <span className="text-white text-xs opacity-0 group-hover:opacity-100">trocar</span>
-                    </div>
-                  </div>
-                  <div className="text-[11px] text-muted mt-1 truncate">{img.label}</div>
-                  <input type="file" accept="image/*" hidden onChange={(e) => {
-                    const file = e.target.files[0]; if (!file) return
-                    const reader = new FileReader()
-                    reader.onload = () => img.onReplace(reader.result)
-                    reader.readAsDataURL(file)
-                  }} />
-                </label>
-              ))}
-            </div>
+            <ImageGrid images={images} />
           </div>
         )
       })}
-      {proposals.filter((p) => p.tipologia === openTipologia).every((p) => collectProposalImages(p, () => {}).length === 0) && (
+      {proposals.every((p) => collectProposalImages(p, () => {}).length === 0)
+        && !['all', openTipologia].some((b) => collectProposalImages({ slideOverrides: templateImages?.slideDefaults?.[b] || {} }, () => {}).length > 0) && (
         <p className="text-sm text-muted">Nenhuma imagem adicionada ainda nas propostas desta tipologia.</p>
       )}
+    </div>
+  )
+}
+
+function ImageGrid({ images }) {
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+      {images.map((img) => (
+        <label key={img.key} className="cursor-pointer group">
+          <div className="relative">
+            <img src={img.url} alt="" className="w-full aspect-square object-cover rounded-lg border border-line bg-sand" />
+            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition rounded-lg flex items-center justify-center">
+              <span className="text-white text-xs opacity-0 group-hover:opacity-100">trocar</span>
+            </div>
+          </div>
+          <div className="text-[11px] text-muted mt-1 truncate">{img.label}</div>
+          <input type="file" accept="image/*" hidden onChange={(e) => {
+            const file = e.target.files[0]; if (!file) return
+            const reader = new FileReader()
+            reader.onload = () => img.onReplace(reader.result)
+            reader.readAsDataURL(file)
+          }} />
+        </label>
+      ))}
     </div>
   )
 }

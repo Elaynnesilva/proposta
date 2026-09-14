@@ -597,6 +597,41 @@ export default function Presenter() {
     }
   }
 
+  /**
+   * Remove um slide extra de vez: ele pode estar guardado na proposta, no modelo (quando foi
+   * salvo "para todas as propostas" ou para um tipo), ou nos dois — então limpamos os dois
+   * lugares, senão ele voltaria a aparecer na próxima abertura.
+   */
+  function excluirSlideExtra(slideId) {
+    setEditing(false)
+    updateProposal((prev) => {
+      const overrides = { ...(prev.slideOverrides || {}) }
+      delete overrides[slideId]
+      return {
+        ...prev,
+        slideOverrides: overrides,
+        customSlides: (prev.customSlides || []).filter((c, i) => (c.id || `custom-${i}`) !== slideId),
+        slideOrder: (prev.slideOrder || []).filter((sid) => sid !== slideId),
+        hiddenSlides: (prev.hiddenSlides || []).filter((sid) => sid !== slideId),
+      }
+    })
+    setTemplateContent((prev) => {
+      const atuais = prev?.customSlides
+      if (!atuais) return prev
+      const todos = {}
+      let mudou = false
+      Object.entries(atuais).forEach(([bucket, lista]) => {
+        const filtrada = (lista || []).filter((c) => c.id !== slideId)
+        if (filtrada.length !== (lista || []).length) mudou = true
+        todos[bucket] = filtrada
+      })
+      if (!mudou) return prev
+      const nextContent = { ...prev, customSlides: todos }
+      saveTemplateContent(nextContent).catch((err) => { console.error(err); alert(scopeSaveErrorMessage(err)) })
+      return nextContent
+    })
+  }
+
   /** Cria um slide extra já dentro da apresentação, pula pra ele e abre a edição. */
   function novoSlide() {
     const novo = {
@@ -717,6 +752,7 @@ export default function Presenter() {
                   onSaveVideoScope={(scope, patch) => saveVideoByScope(scope, patch)}
                   onSaveFields={saveFieldsPatch}
                   onSaveVisibility={saveVisibilityPatch}
+                  onDeleteSlide={excluirSlideExtra}
                   onClose={() => setEditing(false)}
                 />
               ) : (
@@ -807,6 +843,7 @@ export default function Presenter() {
               onSaveVideoScope={(scope, patch) => saveVideoByScope(scope, patch)}
               onSaveFields={saveFieldsPatch}
               onSaveVisibility={saveVisibilityPatch}
+              onDeleteSlide={excluirSlideExtra}
               onClose={() => setEditing(false)}
             />
           )}
@@ -884,10 +921,10 @@ function getItemsLength(slide) {
   // então um clique já avança pro próximo slide, sem etapas escondidas no meio
   if (slide.type === 'cover' || slide.type === 'profile') return 0
   // nestes dois, o texto aparece todo de uma vez — quem controla o clique agora são as imagens
-  if (slide.type === 'scopeSection' || slide.type === 'modeling') return effectiveImages(slide).length
+  if (slide.type === 'scopeSection' || slide.type === 'modeling') return contagemDeFotos(slide)
   // slide extra sem vídeo usa o mesmo desenho das seções de escopo: o texto aparece inteiro e
   // quem avança um a um são as fotos
-  if (slide.type === 'custom' && !slide.embedUrl && !slide.videoUrl) return effectiveImages(slide).length
+  if (slide.type === 'custom' && !slide.embedUrl && !slide.videoUrl) return contagemDeFotos(slide)
   // aqui os textos continuam clicáveis normalmente, mas os cards de valor entram como um passo extra, no final
   if (slide.type === 'pricingCalc') return (slide.hourValue || slide.dayValue) ? 1 : 0
   // o valor + prazo do pacote é o 1º passo; os cards de pagamento vêm depois, um a um
@@ -900,6 +937,18 @@ function getItemsLength(slide) {
   if (Array.isArray(slide.items)) return slide.items.length
   if (slide.type === 'stages') return slide.stages?.length || 0
   return 0
+}
+
+/**
+ * Quantos cliques o slide tem: uma parada por foto. Com uma foto só na lateral, ela já entra
+ * junto com o texto (é o desenho de duas colunas), então não há parada nenhuma — senão ficava
+ * um clique "vazio" antes de passar de página.
+ */
+function contagemDeFotos(slide) {
+  const imgs = effectiveImages(slide)
+  const lateral = slide.imagePlacement === 'left' || slide.imagePlacement === 'right'
+  if (imgs.length === 1 && lateral) return 0
+  return imgs.length
 }
 
 /** Junta o(s) campo(s) de imagem antigos (image/image2) com o novo array "images",
@@ -1188,7 +1237,7 @@ function normalizeStepImages(list) {
   return (list || []).map((v) => (typeof v === 'string' ? { url: v } : (v || {})))
 }
 
-function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALETTE, proposal, onSaveVideoScope, onSaveFields, onSaveVisibility, embedded = false }) {
+function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALETTE, proposal, onSaveVideoScope, onSaveFields, onSaveVisibility, onDeleteSlide, embedded = false }) {
   // slides de material de apresentação já nascem com "todas as propostas, de todos os tipos"
   // selecionado: é o comportamento pedido — o que se coloca aqui deve valer para as próximas
   // propostas também, sem precisar refazer. Slides de um cliente específico continuam
@@ -1218,6 +1267,8 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
   const [imagensGuardadas, setImagensGuardadas] = useState([])
   const [images, setImages] = useState(() => effectiveImages(slide))
   const [imageLayout, setImageLayout] = useState(slide.imageLayout || 'row')
+  // com UMA foto só: embaixo do texto (padrão) ou ocupando a lateral, como nos slides de foto fixa
+  const [imagePlacement, setImagePlacement] = useState(slide.imagePlacement || 'below')
   const [adjustingIdx, setAdjustingIdx] = useState(null)
   const hasSingleImage = 'image' in slide && !isMultiImage && slide.type !== 'cover'
   const isCover = slide.type === 'cover'
@@ -1278,6 +1329,7 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
     setStepImages(normalizeStepImages(slide.stepImages))
     setImages(effectiveImages(slide))
     setImageLayout(slide.imageLayout || 'row')
+    setImagePlacement(slide.imagePlacement || 'below')
     setEmbedUrl(slide.embedUrl || '')
     setAdjustingIdx(null)
     setSingleImage({ url: slide.image || '', posX: slide.imagePosX, posY: slide.imagePosY })
@@ -1366,7 +1418,7 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
     // As fotos seguem em base64 no estado local (pra aparecer na hora); quem troca por uma
     // referência curta antes de gravar é o updateProposal / saveTemplateContent.
     if (isMultiImage) {
-      Object.assign(patch, { images, imageLayout, image: null, image2: null })
+      Object.assign(patch, { images, imageLayout, imagePlacement, image: null, image2: null })
       // a "Acompanhamento de obra" usa a descrição vinda de "Dados do projeto" (ver acima) —
       // não duplica aqui como override, senão o texto do campo nunca mais apareceria
       if (slide.id !== 'obra') patch.description = description
@@ -1392,16 +1444,19 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
       </div>
 
       <label className="text-xs font-medium text-ink/70 block mb-1">Título</label>
-      <input value={title} onChange={(e) => setTitle(e.target.value)} className="w-full text-sm p-2.5 rounded-lg border border-line outline-none focus:border-clay mb-4" />
+      {/* caixa de várias linhas: dá pra apertar Enter e a quebra aparece igual no slide */}
+      <textarea value={title} rows={2} onChange={(e) => setTitle(e.target.value)} className="w-full text-sm p-2.5 rounded-lg border border-line outline-none focus:border-clay mb-1" />
+      <p className="text-[11px] text-muted mb-4">Aperte Enter para quebrar o título em mais de uma linha.</p>
 
       {isCover && (
         <>
           <label className="text-xs font-medium text-ink/70 block mb-1">Texto pequeno acima do título</label>
-          <input
-            value={kicker} onChange={(e) => setKicker(e.target.value)}
+          <textarea
+            value={kicker} rows={2} onChange={(e) => setKicker(e.target.value)}
             placeholder="Ex: Apresentação de proposta de projeto"
-            className="w-full text-sm p-2.5 rounded-lg border border-line outline-none focus:border-clay mb-4"
+            className="w-full text-sm p-2.5 rounded-lg border border-line outline-none focus:border-clay mb-1"
           />
+          <p className="text-[11px] text-muted mb-4">Fica sempre numa linha só; use Enter para quebrar onde você quiser.</p>
           <div className="mb-4">
             <SingleImageField
               label="Imagem de fundo da capa"
@@ -1508,7 +1563,7 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
       {slide.type === 'journeyFlow' && (
         <>
           <label className="text-xs font-medium text-ink/70 block mb-1">Subtítulo</label>
-          <input value={subtitle} onChange={(e) => setSubtitle(e.target.value)} className="w-full text-sm p-2.5 rounded-lg border border-line outline-none focus:border-clay mb-4" />
+          <textarea value={subtitle} rows={2} onChange={(e) => setSubtitle(e.target.value)} className="w-full text-sm p-2.5 rounded-lg border border-line outline-none focus:border-clay mb-4" />
         </>
       )}
 
@@ -1565,8 +1620,8 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
           {reasonsList.map((r, i) => (
             <div key={i} className="border border-line rounded-lg p-3 mb-2">
               <div className="flex items-center gap-2 mb-1.5">
-                <input
-                  value={r.title || ''}
+                <textarea
+                  value={r.title || ''} rows={2}
                   onChange={(e) => setReasonsList((prev) => prev.map((p, k) => k === i ? { ...p, title: e.target.value } : p))}
                   className="flex-1 text-sm font-medium p-1.5 rounded border border-line outline-none focus:border-clay"
                   placeholder="Título do motivo"
@@ -1590,8 +1645,8 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
           {stages.map((s, i) => (
             <div key={i} className="border border-line rounded-lg p-3 mb-3">
               <div className="flex items-center gap-2 mb-2">
-                <input
-                  value={s.title}
+                <textarea
+                  value={s.title} rows={2}
                   onChange={(e) => setStages((prev) => prev.map((p, k) => k === i ? { ...p, title: e.target.value } : p))}
                   className="flex-1 text-sm font-medium p-1.5 rounded border border-line outline-none focus:border-clay"
                   placeholder="Título da apresentação"
@@ -1741,11 +1796,30 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
             <p className="text-xs text-muted mb-2">Nenhuma imagem — o texto vai ocupar o espaço todo, de um jeito mais legível.</p>
           ) : (
             <>
-              <div className="text-xs font-medium text-ink/70 block mb-1 mt-3">Organização das imagens</div>
-              <div className="flex gap-2 mb-3">
-                <button onClick={() => setImageLayout('row')} className={`text-xs px-3 py-1.5 rounded-full border ${imageLayout === 'row' ? 'bg-ink text-white border-ink' : 'border-line text-ink/70'}`}>Lado a lado</button>
-                <button onClick={() => setImageLayout('grid')} className={`text-xs px-3 py-1.5 rounded-full border ${imageLayout === 'grid' ? 'bg-ink text-white border-ink' : 'border-line text-ink/70'}`}>Grade</button>
-              </div>
+              {images.length === 1 ? (
+                <>
+                  <div className="text-xs font-medium text-ink/70 block mb-1 mt-3">Posição da imagem</div>
+                  <div className="flex gap-2 mb-3 flex-wrap">
+                    {[['below', 'Abaixo do texto'], ['left', 'Lateral esquerda'], ['right', 'Lateral direita']].map(([id, label]) => (
+                      <button
+                        key={id} onClick={() => setImagePlacement(id)}
+                        className={`text-xs px-3 py-1.5 rounded-full border ${imagePlacement === id ? 'bg-ink text-white border-ink' : 'border-line text-ink/70'}`}
+                      >{label}</button>
+                    ))}
+                  </div>
+                  {imagePlacement !== 'below' && (
+                    <p className="text-[11px] text-muted mb-3">Na lateral, a foto ocupa metade da página e o formato escolhido abaixo não se aplica.</p>
+                  )}
+                </>
+              ) : (
+                <>
+                  <div className="text-xs font-medium text-ink/70 block mb-1 mt-3">Organização das imagens</div>
+                  <div className="flex gap-2 mb-3">
+                    <button onClick={() => setImageLayout('row')} className={`text-xs px-3 py-1.5 rounded-full border ${imageLayout === 'row' ? 'bg-ink text-white border-ink' : 'border-line text-ink/70'}`}>Lado a lado</button>
+                    <button onClick={() => setImageLayout('grid')} className={`text-xs px-3 py-1.5 rounded-full border ${imageLayout === 'grid' ? 'bg-ink text-white border-ink' : 'border-line text-ink/70'}`}>Grade</button>
+                  </div>
+                </>
+              )}
               <div className="space-y-2 mb-3">
                 {images.map((img, i) => (
                   <div key={i} className="border border-line rounded-lg p-2">
@@ -1809,6 +1883,13 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
       {uploadingCount > 0 && (
         <p className="text-xs text-clay mb-2">Processando imagem(ns)… um instante.</p>
       )}
+      {slide.type === 'custom' && onDeleteSlide && (
+        <button
+          onClick={() => { if (confirm('Excluir este slide? Ele sai desta proposta e também do modelo, se você tiver salvado para as outras propostas.')) onDeleteSlide(slide.id) }}
+          className="w-full text-sm py-2.5 rounded-lg border border-red-200 text-red-600 mt-6 hover:bg-red-50"
+        >Excluir este slide</button>
+      )}
+
       <div className="flex gap-2 mt-6">
         <button onClick={onClose} className="flex-1 text-sm py-2.5 rounded-lg border border-line text-muted">Cancelar</button>
         <button onClick={save} disabled={uploadingCount > 0} className="flex-1 text-sm py-2.5 rounded-lg bg-clay text-white font-medium disabled:opacity-50">{uploadingCount > 0 ? 'Salvando…' : 'Salvar'}</button>
@@ -1935,7 +2016,9 @@ function SlideImage({ src, className, style }) {
   return <img src={src} alt="" crossOrigin="anonymous" className={`object-cover ${className}`} style={style} />
 }
 
-const titleStyle = { fontFamily: STYLE.displayFont, fontWeight: STYLE.headingWeight, textTransform: STYLE.headingTransform, letterSpacing: STYLE.headingTracking }
+// whiteSpace: 'pre-line' faz o Enter que a pessoa digitou no painel virar quebra de linha de
+// verdade no slide (antes o texto era sempre uma linha corrida, quebrada só pela largura)
+const titleStyle = { fontFamily: STYLE.displayFont, fontWeight: STYLE.headingWeight, textTransform: STYLE.headingTransform, letterSpacing: STYLE.headingTracking, whiteSpace: 'pre-line' }
 const SAND = '#F6F3EE'
 const INK = '#28313C'
 
@@ -2055,11 +2138,12 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
             </div>
           )}
           <div className="relative z-10 p-20 max-w-3xl">
-            {slide.kicker && <div className="text-xs tracking-[0.2em] uppercase mb-4" style={{ color: corKicker }}>{slide.kicker}</div>}
+            {/* 'pre' = não quebra sozinho pela largura; só quebra onde a pessoa apertou Enter */}
+            {slide.kicker && <div className="text-xs tracking-[0.2em] uppercase mb-4" style={{ color: corKicker, whiteSpace: 'pre' }}>{slide.kicker}</div>}
             <h1 className="text-5xl mb-6" style={{ ...titleStyle, color: corTitulo }}>{slide.title}</h1>
             {/* sem animação na capa, a pedido — o texto aparece pronto, junto com o slide */}
             {slide.items.map((it, i) => (
-              <p key={i} className="text-lg mb-2 max-w-xl" style={{ color: corCorpo, opacity: 0.85 }}>{it}</p>
+              <p key={i} className="text-lg mb-2 max-w-xl whitespace-pre-line" style={{ color: corCorpo, opacity: 0.85 }}>{it}</p>
             ))}
           </div>
         </div>
@@ -2540,6 +2624,42 @@ function TopicImageSlide({ slide, c1, revealCount, radius }) {
   const hasImages = imgs.length > 0
   const { bg, heading, titleColor } = slideColors(slide, SAND, c1)
 
+  const textoSolto = (
+    <>
+      <h2 className="text-3xl mb-4" style={{ ...titleStyle, color: titleColor }}>{slide.title}</h2>
+      {slide.description && <p className="mb-6 leading-relaxed" style={{ color: heading, opacity: 0.7 }}>{slide.description}</p>}
+      <div className="space-y-2">
+        {(slide.items || []).filter(Boolean).map((it, i) => (
+          <div key={i} className="auto-left-item flex items-start gap-2 text-lg" style={{ animationDelay: `${i * 40}ms`, color: heading, opacity: 0.85 }}>
+            <span style={{ color: c1 }}>●</span><span>{it}</span>
+          </div>
+        ))}
+      </div>
+    </>
+  )
+
+  // sem nenhuma foto, o slide fica igual ao "Acompanhamento de obra" sem imagem: um bloco de
+  // texto à esquerda, centralizado na vertical. Antes o título ficava colado no topo e os
+  // tópicos caíam soltos no meio da página, porque a grade esticava as linhas vazias.
+  if (!hasImages) {
+    return <SplitLayout noImage bg={bg} radius={radius}>{textoSolto}</SplitLayout>
+  }
+
+  // uma foto só, posicionada na lateral: usa o mesmo desenho de duas colunas dos slides de
+  // foto fixa (quem escolhe é a opção "Posição da imagem" na edição)
+  const lateral = slide.imagePlacement === 'left' || slide.imagePlacement === 'right'
+  if (imgs.length === 1 && lateral) {
+    return (
+      <SplitLayout
+        image={imgs[0].url} radius={radius} bg={bg}
+        imagePosition={slide.imagePlacement}
+        imagePosX={imgs[0].posX} imagePosY={imgs[0].posY}
+      >
+        {textoSolto}
+      </SplitLayout>
+    )
+  }
+
   return (
     <div
       className="w-full h-full p-14 overflow-hidden"
@@ -2631,13 +2751,27 @@ function ImageStrip({ imgs, layout, revealCount, radius }) {
     return { width, height: width / r }
   }
 
+  // grade fixa (e não flex com quebra de linha): com 3 fotos numa fileira, bastava a soma das
+  // larguras passar um décimo de pixel do espaço disponível — coisa de arredondamento — pra
+  // uma delas pular pra linha de baixo. Numa grade com o número de colunas definido, isso não
+  // acontece: a foto pode ficar menor, mas nunca muda de fileira.
   return (
     <div ref={ref} className="min-h-0 w-full h-full">
-      <div className="flex flex-wrap content-start justify-start" style={{ gap: GAP, height: '100%' }}>
+      <div
+        className="grid"
+        style={{
+          gap: GAP,
+          height: '100%',
+          gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+          gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))`,
+          justifyItems: 'start',
+          alignItems: 'center',
+        }}
+      >
         {imgs.map((img, i) => {
           const { width, height } = tamanho(img)
           return (
-            <div key={i} className="relative overflow-hidden" style={{ borderRadius: radius, width, height }}>
+            <div key={i} className="relative overflow-hidden" style={{ borderRadius: radius, width, height, maxWidth: '100%' }}>
               <Reveal i={i} revealCount={revealCount} className="absolute inset-0">
                 <SlideImage src={img.url} className="w-full h-full" style={{ objectPosition: `${img.posX ?? 50}% ${img.posY ?? 50}%` }} />
               </Reveal>
