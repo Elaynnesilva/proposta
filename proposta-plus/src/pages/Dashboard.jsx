@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recharts'
-import { listProposals, saveProposal, deleteProposal, getSettings } from '../lib/db'
+import { listProposals, saveProposal, deleteProposal, getSettings, closeProposal } from '../lib/db'
 import EncerrarProposta from '../components/EncerrarProposta'
 import AvisoTeste from '../components/AvisoTeste'
 import { defaultFieldsObject } from '../lib/fields'
@@ -29,6 +29,29 @@ export default function Dashboard({ acesso }) {
 
   useEffect(() => { refresh(); getSettings().then(setSettings) }, [])
 
+  /**
+   * Passados {DIAS_ATE_ENCERRAR} dias da entrega, a proposta aceita entra em PENDENTE DE
+   * ENCERRAMENTO: a edição trava, mas nada é apagado.
+   *
+   * A primeira ideia era encerrar de vez, sozinho. O problema é que encerrar apaga a
+   * apresentação e as fotos, e aqui não há ninguém na frente da tela para baixar o PDF antes —
+   * quem ficasse dois meses sem entrar voltaria e encontraria tudo apagado, sem cópia. Travar
+   * a edição empurra a pessoa a resolver (baixar o PDF e confirmar) sem risco de perda.
+   *
+   * Em troca, o espaço só é devolvido quando alguém confirma. É uma escolha consciente:
+   * perder trabalho é pior do que ocupar memória por mais alguns dias.
+   */
+  async function marcarPendentes(lista) {
+    const vencidas = lista.filter((p) => (
+      !p.closed && !p.pendenteEncerramento && p.status === 'aceita' && (diasAteEncerrar(p) ?? 1) <= 0
+    ))
+    if (!vencidas.length) return lista
+    for (const p of vencidas) {
+      await saveProposal({ ...p, pendenteEncerramento: true }).catch((err) => console.error(err))
+    }
+    return listProposals()
+  }
+
   async function refresh() {
     setLoading(true)
     const todas = await listProposals()
@@ -42,12 +65,35 @@ export default function Dashboard({ acesso }) {
       await Promise.all(paraApagar.map((p) => deleteProposal(p.id).catch((err) => console.error(err))))
     }
 
+    const apos = await marcarPendentes(todas)
     // as intocadas somem da lista e das contas do gráfico imediatamente, apagadas ou não
-    setProposals(todas.filter((p) => !isUntouchedDraft(p)))
+    setProposals(apos.filter((p) => !isUntouchedDraft(p)))
     setLoading(false)
   }
 
+  /**
+   * Quantas propostas foram criadas no mês corrente. O limite existe para o banco não crescer
+   * mais rápido do que o espaço disponível — o plano gratuito do Firebase dá 1 GiB para a
+   * conta inteira, e cada proposta com fotos pesa alguns MB.
+   */
+  const criadasNoMes = useMemo(() => {
+    const agora = new Date()
+    return proposals.filter((p) => {
+      const d = p.createdAt?.toDate ? p.createdAt.toDate() : (p.createdAt?.seconds ? new Date(p.createdAt.seconds * 1000) : null)
+      if (!d) return false
+      return d.getFullYear() === agora.getFullYear() && d.getMonth() === agora.getMonth()
+    }).length
+  }, [proposals])
+
+  const limiteMensal = Number(acesso?.config?.suporte?.limiteMensal) || 6
+  // a administradora não entra no limite: é ela quem demonstra o sistema e acompanha o consumo
+  const limiteAtingido = acesso?.papel !== 'dono' && criadasNoMes >= limiteMensal
+
   async function createProposal() {
+    if (limiteAtingido) {
+      alert(`Você já criou ${criadasNoMes} propostas neste mês, que é o limite de ${limiteMensal}.\n\nO limite volta a zerar no dia 1º. Encerrar propostas já entregues libera espaço, mas não muda a contagem do mês.`)
+      return
+    }
     const saved = await saveProposal({
       name: 'Nova proposta',
       status: 'rascunho',
@@ -128,14 +174,21 @@ export default function Dashboard({ acesso }) {
           <h1 className="font-display text-3xl text-ink">Propostas</h1>
           <p className="text-sm text-muted mt-1">Crie, acompanhe e apresente suas propostas de projeto.</p>
         </div>
+        <div className="text-right">
         <button
           onClick={createProposal}
-          disabled={acesso && acesso.podeEditar === false}
-          title={acesso && acesso.podeEditar === false ? 'Seu período de teste terminou' : undefined}
+          disabled={(acesso && acesso.podeEditar === false) || limiteAtingido}
+          title={limiteAtingido ? `Limite de ${limiteMensal} propostas por mês atingido` : undefined}
           className="bg-clay text-white text-sm font-medium px-5 py-2.5 rounded-full hover:opacity-90 transition disabled:opacity-40"
         >
           + Nova proposta
         </button>
+        {acesso?.papel !== 'dono' && (
+          <p className="text-[11px] text-muted mt-1.5">
+            {criadasNoMes} de {limiteMensal} propostas criadas neste mês
+          </p>
+        )}
+        </div>
       </div>
 
       {/* CRM highlights */}
@@ -246,7 +299,7 @@ export default function Dashboard({ acesso }) {
                   apresentação e sem edição — a apresentação e as fotos já não existem mais */}
               <div className="flex gap-2 mb-4 flex-wrap">
                 <button onClick={() => navigate(`/proposta/${p.id}/editar`)} className="text-xs px-3 py-1.5 rounded-full border border-line hover:bg-sand">
-                  {p.closed ? 'Ver dados do projeto' : 'Editar'}
+                  {p.closed || p.pendenteEncerramento ? 'Ver dados do projeto' : 'Editar'}
                 </button>
                 {!p.closed && (
                   <button onClick={() => navigate(`/proposta/${p.id}/apresentar`)} className="text-xs px-3 py-1.5 rounded-full bg-ink text-white hover:opacity-90">Apresentar</button>
@@ -257,6 +310,24 @@ export default function Dashboard({ acesso }) {
               {p.recusaMotivo && (
                 <div className="text-[11px] mb-3 p-2 rounded-lg" style={{ background: '#FDEEEC', color: '#B42318' }}>
                   Motivo da recusa: {p.recusaMotivo}
+                </div>
+              )}
+
+              {/* contagem regressiva: avisa com antecedência que a edição vai travar */}
+              {!p.closed && !p.pendenteEncerramento && p.status === 'aceita' && (diasAteEncerrar(p) ?? 99) <= 30 && (
+                <div
+                  className="text-[11px] mb-3 p-2 rounded-lg"
+                  style={(diasAteEncerrar(p) ?? 99) <= 7 ? { background: '#FDEEEC', color: '#B42318' } : { background: '#FEF6E7', color: '#8A5A00' }}
+                >
+                  Em {Math.max(diasAteEncerrar(p), 0)} dia(s), em {prazoDeEncerramento(p)?.toLocaleDateString('pt-BR')},
+                  esta proposta trava para edição e fica aguardando encerramento. Nada é apagado até você confirmar.
+                </div>
+              )}
+
+              {!p.closed && p.pendenteEncerramento && (
+                <div className="text-[11px] mb-3 p-2 rounded-lg" style={{ background: '#FDEEEC', color: '#B42318' }}>
+                  <strong>Pendente de encerramento.</strong> Passaram {DIAS_ATE_ENCERRAR} dias da entrega e a
+                  edição está travada. Suas fotos continuam guardadas — baixe o PDF e encerre para liberar espaço.
                 </div>
               )}
 
@@ -271,7 +342,7 @@ export default function Dashboard({ acesso }) {
                 <button
                   onClick={() => setEncerrarId(p.id)}
                   className="w-full text-xs py-2.5 rounded-lg mb-3 font-medium text-white"
-                  style={{ background: '#B45309' }}
+                  style={{ background: p.pendenteEncerramento ? '#B42318' : '#B45309' }}
                 >📦 Encerrar proposta e liberar espaço</button>
               )}
 
@@ -386,6 +457,36 @@ function AcceptValueForm({ defaultValue, onConfirm }) {
  * entre os pacotes). É a partir dela que a proposta aceita passa a oferecer o encerramento —
  * antes disso a apresentação ainda pode ser útil.
  */
+/** Dias de tolerância após a entrega antes do encerramento acontecer sozinho. */
+export const DIAS_ATE_ENCERRAR = 30
+
+/** Data final de entrega do projeto (a mais distante entre os pacotes). */
+function dataDeEntrega(p) {
+  const fields = p.fields || {}
+  const datas = ['completo', 'basico', 'essencial']
+    .map((id) => parseDataBR(fields[`${id}Fim`]))
+    .filter(Boolean)
+  if (!datas.length) return null
+  return new Date(Math.max(...datas.map((d) => d.getTime())))
+}
+
+/**
+ * Quando esta proposta será encerrada sozinha. Encerrar apaga a apresentação e as fotos —
+ * é o que devolve espaço — então proposta aceita e entregue não pode ficar ocupando memória
+ * para sempre só porque ninguém se lembrou de encerrar.
+ */
+export function prazoDeEncerramento(p) {
+  const entrega = dataDeEntrega(p)
+  if (!entrega) return null
+  return new Date(entrega.getTime() + DIAS_ATE_ENCERRAR * 24 * 60 * 60 * 1000)
+}
+
+export function diasAteEncerrar(p) {
+  const prazo = prazoDeEncerramento(p)
+  if (!prazo) return null
+  return Math.ceil((prazo.getTime() - Date.now()) / (24 * 60 * 60 * 1000))
+}
+
 function entregaVencida(p) {
   const fields = p.fields || {}
   const datas = ['completo', 'basico', 'essencial']

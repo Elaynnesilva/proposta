@@ -29,6 +29,7 @@ export const SUPORTE_PADRAO = {
   whatsapp: '(99) 9 8149-9138',
   email: 'precifiquebem.contato@gmail.com',
   diasTeste: 30,
+  limiteMensal: 6,
   botaoNome: 'Pack PreciFiqueBem',
   botaoLink: 'https://elaynnemaria.wixsite.com/arqdesign/pack-precifiquebem',
   emailPrincipal: EMAIL_PRINCIPAL_PADRAO,

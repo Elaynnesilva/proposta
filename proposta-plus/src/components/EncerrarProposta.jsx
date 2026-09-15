@@ -41,8 +41,8 @@ export default function EncerrarProposta({ proposal, recusa, onCancelar, onPront
     setSalvando(true)
     try {
       const base = recusa
-        ? { ...proposal, status: 'recusada', acceptedValue: undefined, recusaMotivo: motivoFinal, recusaEm: new Date().toISOString() }
-        : proposal
+        ? { ...proposal, status: 'recusada', acceptedValue: undefined, recusaMotivo: motivoFinal, recusaEm: new Date().toISOString(), pendenteEncerramento: false }
+        : { ...proposal, pendenteEncerramento: false }
       if (recusa) await saveProposal(base)
       const apagadas = await closeProposal(base)
       onPronto?.(apagadas)

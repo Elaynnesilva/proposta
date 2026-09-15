@@ -318,6 +318,7 @@ function AbaSuporte({ config, onGravar, salvando }) {
       {campo('whatsapp', 'WhatsApp do suporte')}
       {campo('email', 'E-mail do suporte')}
       {campo('diasTeste', 'Tempo de teste (dias)')}
+      {campo('limiteMensal', 'Limite de propostas por mês', { dica: 'Vale para todos, menos para você. Protege o espaço do banco, que é compartilhado.' })}
       {campo('botaoNome', 'Nome do botão de vendas')}
       {campo('botaoLink', 'Link de vendas')}
 
@@ -343,7 +344,7 @@ function AbaSuporte({ config, onGravar, salvando }) {
 
       <button
         disabled={salvando}
-        onClick={() => onGravar({ suporte: { ...s, diasTeste: Number(s.diasTeste) || 30, colaboradores: separarEmails(colaboradores) } })}
+        onClick={() => onGravar({ suporte: { ...s, diasTeste: Number(s.diasTeste) || 30, limiteMensal: Number(s.limiteMensal) || 6, colaboradores: separarEmails(colaboradores) } })}
         className="text-sm px-5 py-2.5 rounded-full bg-clay text-white font-medium disabled:opacity-50"
       >{salvando ? 'Salvando…' : 'Salvar'}</button>
     </div>

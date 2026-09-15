@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import EncerrarProposta from '../components/EncerrarProposta'
+import { diasAteEncerrar, prazoDeEncerramento, DIAS_ATE_ENCERRAR } from './Dashboard'
 import { getProposalRaw, saveProposal, getSettings, addSavedSwatch, addSavedPalette, removeSavedPalette, listEvents, saveEvent, deleteEvent } from '../lib/db'
 import { parseMoneyBR } from '../lib/fields'
 import DataTable from '../components/DataTable'
@@ -113,6 +114,35 @@ export default function Editor() {
       {/* proposta encerrada vira consulta: a apresentação e as fotos já foram apagadas, então
           sobra o registro dos dados do projeto, sem edição. O <fieldset disabled> abaixo
           desativa todos os campos de uma vez, sem precisar mexer em cada um. */}
+      {/* o mesmo aviso do painel, dentro da proposta: é aqui que a pessoa vem quando o
+          projeto acaba, e é a última chance de baixar o PDF antes do encerramento automático */}
+      {!proposal.closed && proposal.pendenteEncerramento && (
+        <div className="mb-4 p-4 rounded-xl" style={{ background: '#FDEEEC' }}>
+          <div className="font-medium text-sm mb-0.5" style={{ color: '#B42318' }}>Pendente de encerramento</div>
+          <p className="text-sm" style={{ color: '#B42318' }}>
+            Passaram {DIAS_ATE_ENCERRAR} dias da data de entrega, então a edição desta proposta ficou travada.
+            <strong> Nada foi apagado</strong> — a apresentação e as fotos continuam guardadas. Para liberar o
+            espaço, volte ao painel, baixe o PDF e clique em "Encerrar proposta".
+          </p>
+        </div>
+      )}
+
+      {!proposal.closed && !proposal.pendenteEncerramento && proposal.status === 'aceita' && (diasAteEncerrar(proposal) ?? 99) <= 60 && (
+        <div
+          className="mb-4 p-4 rounded-xl"
+          style={(diasAteEncerrar(proposal) ?? 99) <= 7 ? { background: '#FDEEEC' } : { background: '#FEF6E7' }}
+        >
+          <div className="font-medium text-sm mb-0.5" style={{ color: '#8A5A00' }}>Encerramento automático</div>
+          <p className="text-sm" style={{ color: '#8A5A00' }}>
+            {diasAteEncerrar(proposal) > 0
+              ? `Em ${diasAteEncerrar(proposal)} dia(s), em ${prazoDeEncerramento(proposal)?.toLocaleDateString('pt-BR')}, esta proposta trava para edição.`
+              : 'Esta proposta vai travar para edição assim que o painel for aberto.'}
+            {' '}São {DIAS_ATE_ENCERRAR} dias após a data de entrega. <strong>Nada é apagado sozinho</strong>: as
+            fotos só saem quando você baixar o PDF e confirmar o encerramento, no painel.
+          </p>
+        </div>
+      )}
+
       {proposal.recusaMotivo && (
         <div className="mb-4 p-4 rounded-xl" style={{ background: '#FDEEEC' }}>
           <div className="font-medium text-sm mb-0.5" style={{ color: '#B42318' }}>Proposta recusada</div>
@@ -155,7 +185,9 @@ export default function Editor() {
         ))}
       </div>
 
-      <fieldset disabled={!!proposal.closed} className={proposal.closed ? 'opacity-75' : ''}>
+      {/* pendente de encerramento trava a edição igual a uma proposta encerrada, mas sem
+          apagar nada — os dados continuam à vista, só não podem mais ser alterados */}
+      <fieldset disabled={!!(proposal.closed || proposal.pendenteEncerramento)} className={proposal.closed || proposal.pendenteEncerramento ? 'opacity-75' : ''}>
         {(tab === 'dados' || proposal.closed) && (
           <>
             <TipologiaPicker proposal={proposal} onChange={persist} />
