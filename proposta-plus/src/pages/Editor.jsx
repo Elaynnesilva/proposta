@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { getProposal, saveProposal, getSettings, addSavedSwatch, addSavedPalette, removeSavedPalette, listEvents, saveEvent, deleteEvent } from '../lib/db'
-import { toEmbedUrl, parseMoneyBR } from '../lib/fields'
+import { parseMoneyBR } from '../lib/fields'
 import DataTable from '../components/DataTable'
 import ColorWheelPicker from '../components/ColorWheelPicker'
 import { DEFAULT_PALETTE } from '../lib/templates'
@@ -13,7 +13,6 @@ const TABS = [
   { id: 'agendamentos', label: 'Agendamentos' },
   { id: 'design', label: 'Design e cores' },
   { id: 'precos', label: 'Preços a mostrar' },
-  { id: 'slides', label: 'Slides personalizados' },
 ]
 
 const DEFAULT_VISIBILITY = {
@@ -125,7 +124,6 @@ export default function Editor() {
       {tab === 'agendamentos' && <AgendamentosTab proposal={proposal} />}
       {tab === 'design' && <DesignTab proposal={proposal} onChange={persist} />}
       {tab === 'precos' && <PricingVisibilityTab proposal={proposal} onChange={persist} />}
-      {tab === 'slides' && <CustomSlidesTab proposal={proposal} onChange={persist} />}
       </div>
     </>
   )
@@ -456,84 +454,6 @@ function ToggleRow({ label, checked, onToggle }) {
   )
 }
 
-function CustomSlidesTab({ proposal, onChange }) {
-  const slides = proposal.customSlides || []
-
-  function addSlide() {
-    // o id precisa ser estável: é por ele que o slide extra é reconhecido ao ser salvo
-    // "para todas as propostas" (vira parte do modelo) e ao ser editado depois
-    onChange({ customSlides: [...slides, { id: `custom-${Date.now().toString(36)}`, title: 'Novo slide', items: [''], images: [], imageLayout: 'row', image: '', embedUrl: '' }] })
-  }
-  function updateSlide(i, patch) {
-    const next = slides.map((s, idx) => (idx === i ? { ...s, ...patch } : s))
-    onChange({ customSlides: next })
-  }
-  function removeSlide(i) {
-    onChange({ customSlides: slides.filter((_, idx) => idx !== i) })
-  }
-  function handleImage(i, file) {
-    const reader = new FileReader()
-    reader.onload = () => updateSlide(i, { image: reader.result, embedUrl: '' })
-    reader.readAsDataURL(file)
-  }
-
-  return (
-    <div className="max-w-2xl">
-      <p className="text-sm text-muted mb-5">
-        Crie telas extras com o que quiser: título, textos (aparecem um a um ao clicar) e uma imagem ou vídeo (via
-        link de incorporação do YouTube/Vimeo — suba o vídeo como "não listado" e cole o link no formato .../embed/...).
-        Elas entram na apresentação logo antes do encerramento. Você também pode editar slides direto na
-        tela de apresentação, clicando em "Editar slide" — inclusive o vídeo principal do projeto, que agora se edita por lá.
-      </p>
-      <div className="space-y-4">
-        {slides.map((s, i) => (
-          <div key={i} className="border border-line rounded-xl p-4 bg-white">
-            <div className="flex justify-between items-start mb-3">
-              <input
-                value={s.title}
-                onChange={(e) => updateSlide(i, { title: e.target.value })}
-                className="font-medium text-ink text-sm outline-none border-b border-transparent focus:border-line flex-1"
-                placeholder="Título do slide"
-              />
-              <button onClick={() => removeSlide(i)} className="text-xs text-red-600 ml-3">Remover</button>
-            </div>
-            {(s.items || ['']).map((it, k) => (
-              <textarea
-                key={k}
-                value={it}
-                onChange={(e) => {
-                  const items = [...(s.items || [''])]
-                  items[k] = e.target.value
-                  updateSlide(i, { items })
-                }}
-                placeholder={`Texto ${k + 1} (aparece ao clicar)`}
-                rows={2}
-                className="w-full text-sm p-2 mb-2 rounded-lg border border-line outline-none focus:border-clay"
-              />
-            ))}
-            <button onClick={() => updateSlide(i, { items: [...(s.items || ['']), ''] })} className="text-xs text-clay mb-3">+ Adicionar outro texto</button>
-
-            <div className="flex gap-3 items-center text-xs mb-2">
-              <label className="cursor-pointer text-ink/70 hover:text-ink shrink-0">
-                📷 Imagem
-                <input type="file" accept="image/*" hidden onChange={(e) => e.target.files[0] && handleImage(i, e.target.files[0])} />
-              </label>
-              {s.image && <span className="text-green-700">imagem anexada ✓</span>}
-            </div>
-            <input
-              value={s.embedUrl || ''}
-              onChange={(e) => updateSlide(i, { embedUrl: e.target.value, image: e.target.value ? '' : s.image })}
-              onBlur={(e) => updateSlide(i, { embedUrl: toEmbedUrl(e.target.value) })}
-              placeholder="ou link de incorporação de vídeo (https://www.youtube.com/embed/…)"
-              className="w-full text-xs p-2 rounded-lg border border-line outline-none focus:border-clay"
-            />
-          </div>
-        ))}
-      </div>
-      <button onClick={addSlide} className="mt-4 text-sm font-medium text-white bg-ink px-4 py-2 rounded-full hover:opacity-90">+ Novo slide</button>
-    </div>
-  )
-}
 
 function parseBrDate(s) {
   if (!s) return null

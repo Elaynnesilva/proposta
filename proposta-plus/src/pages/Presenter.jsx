@@ -1831,12 +1831,28 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
                   onChange={(next) => setFeedbacks((prev) => prev.map((p, k) => k === i ? { ...p, photoUrl: next.url, photoPosX: next.posX, photoPosY: next.posY } : p))}
                   onPickFile={handleImageFile}
                 />
-                <SingleImageField
-                  compact label="Print (no lugar do texto)" previewClass="w-full h-20"
-                  value={{ url: fb.printUrl || '', posX: fb.printPosX, posY: fb.printPosY }}
-                  onChange={(next) => setFeedbacks((prev) => prev.map((p, k) => k === i ? { ...p, printUrl: next.url, printPosX: next.posX, printPosY: next.posY } : p))}
-                  onPickFile={handleImageFile}
-                />
+                <div>
+                  <SingleImageField
+                    compact label="Print (no lugar do texto)" previewClass="w-full h-20"
+                    value={{ url: fb.printUrl || '', posX: fb.printPosX, posY: fb.printPosY }}
+                    onChange={(next) => setFeedbacks((prev) => prev.map((p, k) => k === i ? { ...p, printUrl: next.url, printPosX: next.posX, printPosY: next.posY } : p))}
+                    onPickFile={handleImageFile}
+                  />
+                  {fb.printUrl && (
+                    <select
+                      value={fb.printRatio || ''}
+                      onChange={(e) => setFeedbacks((prev) => prev.map((p, k) => k === i ? { ...p, printRatio: e.target.value } : p))}
+                      className="text-xs border border-line rounded px-2 py-1.5 w-full mt-2"
+                    >
+                      <option value="">Preencher o card</option>
+                      <option value="1:1">1:1 — quadrado</option>
+                      <option value="4:5">4:5 — retrato</option>
+                      <option value="5:4">5:4 — paisagem</option>
+                      <option value="9:16">9:16 — vertical</option>
+                      <option value="16:9">16:9 — widescreen</option>
+                    </select>
+                  )}
+                </div>
               </div>
             </div>
           ))}
@@ -2462,9 +2478,17 @@ function SlideBody({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
            o título. Com a faixa em flex-1 e as linhas em 1fr, todo card tem altura real. */
         <div className="w-full h-full p-16 flex flex-col" style={{ background: bg }}>
           <h2 className="text-4xl mb-8 shrink-0" style={{ ...titleStyle, color: titleColor }}>{slide.title}</h2>
-          <div className="grid grid-cols-3 gap-4 flex-1 min-h-0" style={{ gridAutoRows: 'minmax(0, 1fr)' }}>
-            {slide.items.map((fb, i) => (
-              <Reveal key={i} i={i} revealCount={revealCount} className="overflow-hidden" style={{ borderRadius: radius, background: heading === '#FFFFFF' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)' }}>
+          <div className="grid grid-cols-3 gap-4 flex-1 min-h-0" style={{ gridAutoRows: 'minmax(0, 1fr)', justifyItems: 'start', alignItems: 'stretch' }}>
+            {slide.items.map((fb, i) => {
+              // com um formato escolhido, o CARD inteiro assume esse formato (altura da fileira
+              // e largura vinda da proporção), pra foto não precisar ser cortada pra caber num
+              // quadro de outro formato. Sem escolha, segue preenchendo o card como antes.
+              const razao = fb.printUrl ? RATIO_NUM[fb.printRatio] : null
+              const estiloCard = razao
+                ? { borderRadius: radius, height: '100%', aspectRatio: RATIO_CSS[fb.printRatio], width: 'auto', maxWidth: '100%' }
+                : { borderRadius: radius, width: '100%', height: '100%' }
+              return (
+              <Reveal key={i} i={i} revealCount={revealCount} className="overflow-hidden" style={{ ...estiloCard, background: heading === '#FFFFFF' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)' }}>
                 {fb.printUrl ? (
                   <div className="w-full h-full" style={{ minHeight: 200, ...coverBg(fb.printUrl, `${fb.printPosX ?? 50}% ${fb.printPosY ?? 50}%`) }} />
                 ) : (
@@ -2477,7 +2501,8 @@ function SlideBody({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
                   </div>
                 )}
               </Reveal>
-            ))}
+              )
+            })}
           </div>
         </div>
       )
