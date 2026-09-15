@@ -80,7 +80,19 @@ export async function signOutUser() {
   cachedUser = null
 }
 
+/**
+ * Espaço de dados em uso. Normalmente é o da própria pessoa; só o colaborador aponta para o
+ * espaço da dona — é isso que faz ele cair direto nas propostas dela, sem tela de escolha.
+ * Definido uma vez no login (ver App.jsx) e usado por todas as leituras e gravações.
+ */
+let contaDeTrabalho = null
+
+export function definirContaDeTrabalho(uid) {
+  contaDeTrabalho = uid || null
+}
+
 function requireUid() {
+  if (contaDeTrabalho) return contaDeTrabalho
   if (!cachedUser) throw new Error('Nenhum usuário autenticado.')
   return cachedUser.uid
 }

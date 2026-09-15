@@ -15,7 +15,11 @@ const GRUPO_WHATSAPP = {
   icon: '💎',
 }
 
-export default function Layout({ user, children }) {
+export default function Layout({ user, acesso, children }) {
+  // colaborador não vê Configurações (trabalha na conta da dona) e só a dona vê Usuários
+  const nav = NAV
+    .filter((n) => n.to !== '/configuracoes' || acesso?.papel !== 'colaborador')
+    .concat(acesso?.papel === 'dono' ? [{ to: '/usuarios', label: 'Usuários do sistema', icon: '👥' }] : [])
   const navigate = useNavigate()
 
   async function logout() {
@@ -33,7 +37,7 @@ export default function Layout({ user, children }) {
             <span className="font-display text-lg text-ink">Proposta+</span>
           </div>
           <nav className="px-3 space-y-1">
-            {NAV.map((n) => (
+            {nav.map((n) => (
               <NavLink
                 key={n.to} to={n.to} end={n.to === '/'}
                 className={({ isActive }) => `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition ${isActive ? 'bg-ink text-white' : 'text-ink/70 hover:bg-sand'}`}
@@ -68,7 +72,7 @@ export default function Layout({ user, children }) {
 
       {/* Mobile bottom nav */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-line flex z-20">
-        {NAV.map((n) => (
+        {nav.map((n) => (
           <NavLink
             key={n.to} to={n.to} end={n.to === '/'}
             className={({ isActive }) => `flex-1 flex flex-col items-center gap-0.5 py-2.5 text-xs ${isActive ? 'text-clay' : 'text-muted'}`}

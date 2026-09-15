@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recharts'
 import { listProposals, saveProposal, deleteProposal, getSettings } from '../lib/db'
 import EncerrarProposta from '../components/EncerrarProposta'
+import AvisoTeste from '../components/AvisoTeste'
 import { defaultFieldsObject } from '../lib/fields'
 import { DEFAULT_PALETTE } from '../lib/templates'
 
@@ -13,7 +14,7 @@ const STATUS = {
   recusada: { label: 'Recusada', color: '#B42318', bg: '#FDEEEC' },
 }
 
-export default function Dashboard() {
+export default function Dashboard({ acesso }) {
   const [proposals, setProposals] = useState([])
   const [loading, setLoading] = useState(true)
   const [renamingId, setRenamingId] = useState(null)
@@ -120,12 +121,19 @@ export default function Dashboard() {
         </div>
       )}
 
+      {acesso?.papel === 'teste' && <AvisoTeste acesso={acesso} nome={settings?.professionalName} />}
+
       <div className="flex items-center justify-between mb-8 flex-wrap gap-4">
         <div>
           <h1 className="font-display text-3xl text-ink">Propostas</h1>
           <p className="text-sm text-muted mt-1">Crie, acompanhe e apresente suas propostas de projeto.</p>
         </div>
-        <button onClick={createProposal} className="bg-clay text-white text-sm font-medium px-5 py-2.5 rounded-full hover:opacity-90 transition">
+        <button
+          onClick={createProposal}
+          disabled={acesso && acesso.podeEditar === false}
+          title={acesso && acesso.podeEditar === false ? 'Seu período de teste terminou' : undefined}
+          className="bg-clay text-white text-sm font-medium px-5 py-2.5 rounded-full hover:opacity-90 transition disabled:opacity-40"
+        >
           + Nova proposta
         </button>
       </div>

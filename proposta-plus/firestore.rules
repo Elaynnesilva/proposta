@@ -1,39 +1,91 @@
 rules_version = '2';
+
+/*
+ * REGRAS DO FIRESTORE — Proposta+
+ *
+ * Este arquivo NÃO sobe junto com o deploy da Vercel. Ele precisa ser publicado à mão no
+ * Console do Firebase: Firestore Database > Regras > colar > Publicar.
+ *
+ * ETAPA 1 (esta versão): as listas de usuários já existem e todo mundo é registrado ao
+ * entrar, mas ninguém é bloqueado ainda. Serve para conferir a tela "Usuários do sistema"
+ * com dados reais sem risco de travar o sistema. O bloqueio de excluídos e de testes
+ * vencidos entra na ETAPA 2, depois que esta estiver rodando.
+ */
+
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    function logado() {
+      return request.auth != null;
+    }
+
+    function emailDoUsuario() {
+      return request.auth.token.email.lower();
+    }
+
+    // O e-mail da administradora fica escrito AQUI, e não só no banco, de propósito: se o
+    // app decidisse sozinho quem é administrador, bastaria alguém editar o próprio cadastro
+    // para virar um. Trocar de administradora exige alterar e publicar este arquivo.
+    function ehDona() {
+      return logado() && emailDoUsuario() == 'elaynnearquiteta@gmail.com';
+    }
+
+    function colaboradores() {
+      return get(/databases/$(database)/documents/config/acesso).data.suporte.colaboradores;
+    }
+
+    // colaborador trabalha DENTRO do espaço da dona: pode ler e gravar as propostas dela,
+    // mas não mexe nas configurações da conta nem nas listas de usuários
+    function ehColaboradorDe(donoUid) {
+      return logado()
+        && exists(/databases/$(database)/documents/config/acesso)
+        && emailDoUsuario() in colaboradores()
+        && get(/databases/$(database)/documents/config/acesso).data.donoUid == donoUid;
+    }
+
+    /* ---------------- listas de acesso ---------------- */
+
+    // qualquer pessoa logada LÊ (é assim que o app dela descobre em que situação está),
+    // mas só a dona ESCREVE — senão alguém poderia se colocar na lista de autorizados
+    match /config/acesso {
+      allow read: if logado();
+      allow write: if ehDona();
+    }
+
+    // um documento por pessoa, escrito por ela mesma no primeiro login. A dona lê todos
+    // (é o que alimenta a tabela) e pode apagar ao esvaziar a lixeira.
+    match /acessos/{uid} {
+      allow read: if logado() && (request.auth.uid == uid || ehDona());
+      allow create, update: if logado() && request.auth.uid == uid;
+      allow delete: if ehDona();
+    }
+
+    /* ---------------- dados de cada conta ---------------- */
+
     match /users/{userId} {
-      // leitura aberta: necessário para o link público (o cliente vê a marca/textos padrão sem login).
-      // continua incluindo só marca e textos padrão — nenhuma proposta é lida por aqui.
-      allow read: if true;
-      allow write: if request.auth != null && request.auth.uid == userId;
+      allow read: if logado() && (request.auth.uid == userId || ehColaboradorDe(userId));
+      allow write: if logado() && (request.auth.uid == userId || ehColaboradorDe(userId));
+
+      // biblioteca de imagens da conta (fotos que valem para todas as propostas)
+      match /media/{mediaId} {
+        allow read, write: if logado() && (request.auth.uid == userId || ehColaboradorDe(userId));
+      }
 
       match /proposals/{proposalId} {
-        // a dona da conta sempre pode ler/escrever; qualquer pessoa só pode LER se a
-        // proposta tiver sido marcada como "public" (botão "Link para o cliente")
-        allow read: if (request.auth != null && request.auth.uid == userId) || resource.data.public == true;
-        allow write: if request.auth != null && request.auth.uid == userId;
+        // o link do cliente abre sem login: só funciona se a proposta estiver marcada como pública
+        allow read: if resource.data.public == true
+          || (logado() && (request.auth.uid == userId || ehColaboradorDe(userId)));
+        allow write: if logado() && (request.auth.uid == userId || ehColaboradorDe(userId));
 
-        // fotos dos slides: cada uma é um documento pequeno aqui dentro (em vez de ir direto
-        // no documento da proposta, que tem limite de 1MB). Mesma regra de leitura da
-        // proposta em si — se a proposta é pública, a foto lida por ela também precisa ser
         match /media/{mediaId} {
-          allow read: if (request.auth != null && request.auth.uid == userId) ||
-                         get(/databases/$(database)/documents/users/$(userId)/proposals/$(proposalId)).data.public == true;
-          allow write: if request.auth != null && request.auth.uid == userId;
+          allow read: if logado() && (request.auth.uid == userId || ehColaboradorDe(userId))
+            || get(/databases/$(database)/documents/users/$(userId)/proposals/$(proposalId)).data.public == true;
+          allow write: if logado() && (request.auth.uid == userId || ehColaboradorDe(userId));
         }
       }
 
       match /events/{eventId} {
-        allow read, write: if request.auth != null && request.auth.uid == userId;
-      }
-
-      // biblioteca de imagens da CONTA: fotos que valem para várias propostas (uma tipologia
-      // inteira ou todas). Ficam aqui, e não dentro de uma proposta, porque são reaproveitadas
-      // por todas elas. Leitura aberta pelo mesmo motivo do documento do usuário logo acima:
-      // o link público da apresentação precisa conseguir mostrar essas fotos sem login.
-      match /media/{mediaId} {
-        allow read: if true;
-        allow write: if request.auth != null && request.auth.uid == userId;
+        allow read, write: if logado() && (request.auth.uid == userId || ehColaboradorDe(userId));
       }
     }
   }
