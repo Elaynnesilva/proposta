@@ -106,8 +106,18 @@ function scopeSaveErrorMessage(err) {
   return `Não consegui salvar essa edição para as outras propostas (${msg || 'erro desconhecido'}). Tente de novo, ou use uma foto menor.`
 }
 
-export default function Presenter() {
-  const { id, uid: publicUid } = useParams()
+/**
+ * A apresentação também funciona como GERADOR DE PDF invisível.
+ *
+ * Com exportOnly, ela não desenha interface nenhuma: carrega a proposta, monta os slides,
+ * baixa as fotos, gera o PDF e avisa quem chamou. É assim que o painel consegue gerar o PDF
+ * dentro da própria janela de encerramento, sem jogar a pessoa pra dentro da apresentação —
+ * toda a montagem dos slides já mora aqui, então reaproveitar é mais seguro do que duplicar.
+ */
+export default function Presenter({ proposalId, exportOnly = false, onExportProgress, onExportEnd }) {
+  const params = useParams()
+  const id = proposalId || params.id
+  const publicUid = exportOnly ? null : params.uid
   const isPublic = !!publicUid
   const navigate = useNavigate()
   const [proposal, setProposal] = useState(null)
@@ -758,17 +768,17 @@ export default function Presenter() {
 
   /**
    * Quando o painel manda a pessoa baixar o PDF antes de encerrar a proposta, ele abre a
-   * apresentação com ?exportarPdf=1. A geração começa sozinha e, ao terminar, fica registrado
-   * na proposta que o PDF foi gerado — é isso que destrava o botão de encerrar lá no painel.
+   * Quando a janela de encerramento precisa do PDF, ela monta esta apresentação invisível
+   * (exportOnly). A geração começa sozinha e, ao terminar, fica registrado na proposta que o
+   * PDF foi gerado — é isso que destrava o botão de encerrar.
    */
   useEffect(() => {
-    if (!proposal || !settings || exporting) return
-    if (new URLSearchParams(window.location.hash.split('?')[1] || '').get('exportarPdf') !== '1') return
+    if (!exportOnly || !proposal || !settings) return
     if (exportouAutomatico.current) return
     exportouAutomatico.current = true
-    handleExportPdf()
+    handleExportPdf().then((ok) => onExportEnd?.(ok))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [proposal, settings])
+  }, [exportOnly, proposal, settings])
 
   async function handleExportPdf() {
     setExporting(true)
@@ -782,6 +792,7 @@ export default function Presenter() {
       for (let i = 0; i < visibleSlides.length; i++) {
         setExportIndex(i)
         setExportProgress(i + 1)
+        onExportProgress?.(i + 1, visibleSlides.length)
         // dá um tempinho para a imagem daquele slide carregar antes de "fotografar"
         await new Promise((resolve) => setTimeout(resolve, 400))
         const node = exportRef.current
@@ -809,17 +820,33 @@ export default function Presenter() {
       // fica registrado que existe um PDF desta proposta — é o que destrava "Encerrar
       // proposta" no painel. O app não tem como saber se o arquivo foi guardado numa pasta;
       // o que ele sabe, e é o que importa aqui, é que o PDF chegou a ser gerado e baixado.
-      if (!isPublic) updateProposal((prev) => ({ ...prev, pdfExportedAt: new Date().toISOString() }))
+      if (!isPublic) await updateProposal((prev) => ({ ...prev, pdfExportedAt: new Date().toISOString() }))
+      return true
     } catch (err) {
-      alert('Não consegui gerar o PDF agora. Tente de novo em alguns segundos.')
+      if (!exportOnly) alert('Não consegui gerar o PDF agora. Tente de novo em alguns segundos.')
       console.error(err)
+      return false
     } finally {
       setExporting(false)
     }
   }
 
   if (!proposal || !settings) {
+    if (exportOnly) return null
     return <div className="min-h-screen flex items-center justify-center text-muted">Carregando apresentação…</div>
+  }
+
+  // modo gerador: só o nó invisível de onde as páginas são "fotografadas", sem interface
+  if (exportOnly) {
+    return (
+      <div style={{ position: 'fixed', left: -99999, top: 0, width: EXPORT_W, height: EXPORT_H, overflow: 'hidden' }}>
+        <div ref={exportRef} className="pdf-export-mode" style={{ width: EXPORT_W, height: EXPORT_H }}>
+          {visibleSlides[exportIndex] && (
+            <SlideView slide={visibleSlides[exportIndex]} c1={c1} c2={c2} c3={c3} revealCount={999} settings={settings} exportMode />
+          )}
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -2545,19 +2572,11 @@ function SlideBody({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
            o título. Com a faixa em flex-1 e as linhas em 1fr, todo card tem altura real. */
         <div className="w-full h-full p-16 flex flex-col" style={{ background: bg }}>
           <h2 className="text-4xl mb-8 shrink-0" style={{ ...titleStyle, color: titleColor }}>{slide.title}</h2>
-          <div className="grid grid-cols-3 gap-4 flex-1 min-h-0" style={{ gridAutoRows: 'minmax(0, 1fr)', justifyItems: 'start', alignItems: 'stretch' }}>
-            {slide.items.map((fb, i) => {
-              // com um formato escolhido, o CARD inteiro assume esse formato (altura da fileira
-              // e largura vinda da proporção), pra foto não precisar ser cortada pra caber num
-              // quadro de outro formato. Sem escolha, segue preenchendo o card como antes.
-              const razao = fb.printUrl ? RATIO_NUM[fb.printRatio] : null
-              const estiloCard = razao
-                ? { borderRadius: radius, height: '100%', aspectRatio: RATIO_CSS[fb.printRatio], width: 'auto', maxWidth: '100%' }
-                : { borderRadius: radius, width: '100%', height: '100%' }
-              return (
-              <Reveal key={i} i={i} revealCount={revealCount} className="overflow-hidden" style={{ ...estiloCard, background: heading === '#FFFFFF' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)' }}>
+          <GradeDeFeedbacks itens={slide.items} revealCount={revealCount} radius={radius} corDoCard={heading === '#FFFFFF' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)'}>
+            {(fb, i, estiloCard) => (
+              <Reveal key={i} i={i} revealCount={revealCount} className="overflow-hidden" style={estiloCard}>
                 {fb.printUrl ? (
-                  <div className="w-full h-full" style={{ minHeight: 200, ...coverBg(fb.printUrl, `${fb.printPosX ?? 50}% ${fb.printPosY ?? 50}%`) }} />
+                  <div className="w-full h-full" style={{ ...coverBg(fb.printUrl, `${fb.printPosX ?? 50}% ${fb.printPosY ?? 50}%`) }} />
                 ) : (
                   <div className="p-5">
                     <div className="flex items-center gap-3 mb-3">
@@ -2568,9 +2587,8 @@ function SlideBody({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
                   </div>
                 )}
               </Reveal>
-              )
-            })}
-          </div>
+            )}
+          </GradeDeFeedbacks>
         </div>
       )
     }
@@ -2963,18 +2981,19 @@ function TopicImageSlide({ slide, c1, revealCount, radius }) {
  * na largura OU na altura da célula, o que vier primeiro. As fotos ficam encostadas à
  * esquerda, alinhadas com o título e os tópicos acima delas.
  */
-function ImageStrip({ imgs, layout, perRow, revealCount, radius }) {
-  const ref = useRef(null)
+/**
+ * Mede o espaço disponível de um elemento.
+ *
+ * offsetWidth/Height e NÃO getBoundingClientRect: o slide inteiro é desenhado em 1600x900 e
+ * depois encolhido (ou ampliado) por um transform: scale para caber na tela. O
+ * getBoundingClientRect devolve o tamanho JÁ escalado — e esse número, aplicado de volta
+ * dentro do canvas, seria multiplicado pela escala outra vez.
+ */
+function useTamanhoDaCaixa(ref) {
   const [box, setBox] = useState({ w: 0, h: 0 })
-
   useEffect(() => {
     const el = ref.current
     if (!el) return
-    // offsetWidth/Height e NÃO getBoundingClientRect: o slide inteiro é desenhado em 1600x900
-    // e depois encolhido (ou ampliado) por um transform: scale para caber na tela. O
-    // getBoundingClientRect devolve o tamanho JÁ escalado — e esse número, aplicado de volta
-    // dentro do canvas, era multiplicado pela escala outra vez. Em telas grandes, onde a
-    // escala passa de 1, as fotos saíam maiores que o espaço e invadiam o texto.
     const medir = () => {
       if (el.offsetWidth && el.offsetHeight) setBox({ w: el.offsetWidth, h: el.offsetHeight })
     }
@@ -2982,7 +3001,48 @@ function ImageStrip({ imgs, layout, perRow, revealCount, radius }) {
     let ro
     if (typeof ResizeObserver !== 'undefined') { ro = new ResizeObserver(medir); ro.observe(el) }
     return () => ro?.disconnect()
-  }, [])
+  }, [ref])
+  return box
+}
+
+/**
+ * Grade dos feedbacks. O formato escolhido para o print precisa ser calculado, não deixado
+ * para o CSS: com aspect-ratio + altura cheia, a largura pedida passava da coluna e era
+ * cortada por um maxWidth — e o card acabava exatamente igual ao de antes, como se a escolha
+ * não tivesse sido salva. Aqui o card cresce até bater na largura OU na altura da célula, o
+ * que vier primeiro, e o formato vale de verdade.
+ */
+function GradeDeFeedbacks({ itens, radius, corDoCard, children }) {
+  const ref = useRef(null)
+  const box = useTamanhoDaCaixa(ref)
+  const GAP = 16
+  const colunas = Math.min(itens.length || 1, 3)
+  const cellW = box.w ? (box.w - GAP * (colunas - 1)) / colunas : 0
+  const cellH = box.h || 0
+
+  function estiloDoCard(fb) {
+    const r = fb.printUrl ? RATIO_NUM[fb.printRatio] : null
+    const base = { borderRadius: radius, background: corDoCard }
+    if (!r || !cellW || !cellH) return { ...base, width: '100%', height: '100%' }
+    const largura = Math.min(cellW, cellH * r)
+    return { ...base, width: largura, height: largura / r }
+  }
+
+  return (
+    <div ref={ref} className="flex-1 min-h-0 w-full">
+      <div
+        className="grid h-full"
+        style={{ gap: GAP, gridTemplateColumns: `repeat(${colunas}, minmax(0, 1fr))`, justifyItems: 'start', alignItems: 'center' }}
+      >
+        {itens.map((fb, i) => children(fb, i, estiloDoCard(fb)))}
+      </div>
+    </div>
+  )
+}
+
+function ImageStrip({ imgs, layout, perRow, revealCount, radius }) {
+  const ref = useRef(null)
+  const box = useTamanhoDaCaixa(ref)
 
   const GAP = 16
   const n = imgs.length

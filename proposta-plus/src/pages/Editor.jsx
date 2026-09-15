@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import EncerrarProposta from '../components/EncerrarProposta'
 import { getProposalRaw, saveProposal, getSettings, addSavedSwatch, addSavedPalette, removeSavedPalette, listEvents, saveEvent, deleteEvent } from '../lib/db'
 import { parseMoneyBR } from '../lib/fields'
 import DataTable from '../components/DataTable'
@@ -28,6 +29,7 @@ export default function Editor() {
   const [saving, setSaving] = useState(false)
   const [savedTick, setSavedTick] = useState(false)
 
+  const [recusando, setRecusando] = useState(false)
   // o editor não mostra nenhuma foto (são dados, cores e datas), então carrega a proposta sem
   // baixar as imagens — era isso que fazia "entrar para editar" demorar vários segundos
   useEffect(() => { getProposalRaw(id).then(setProposal) }, [id])
@@ -62,7 +64,7 @@ export default function Editor() {
               />
             </div>
             <div className="flex items-center gap-3 flex-wrap">
-              <StatusPills proposal={proposal} onChange={persist} />
+              <StatusPills proposal={proposal} onChange={persist} onRecusar={() => setRecusando(true)} />
               <span className="text-xs text-muted">{saving ? 'Salvando…' : savedTick ? 'Salvo ✓' : ''}</span>
               <button
                 onClick={() => navigate(`/proposta/${id}/apresentar`)}
@@ -111,6 +113,29 @@ export default function Editor() {
       {/* proposta encerrada vira consulta: a apresentação e as fotos já foram apagadas, então
           sobra o registro dos dados do projeto, sem edição. O <fieldset disabled> abaixo
           desativa todos os campos de uma vez, sem precisar mexer em cada um. */}
+      {proposal.recusaMotivo && (
+        <div className="mb-4 p-4 rounded-xl" style={{ background: '#FDEEEC' }}>
+          <div className="font-medium text-sm mb-0.5" style={{ color: '#B42318' }}>Proposta recusada</div>
+          <p className="text-sm" style={{ color: '#B42318' }}>
+            Motivo: {proposal.recusaMotivo}
+            {proposal.recusaEm && ` · registrado em ${new Date(proposal.recusaEm).toLocaleDateString('pt-BR')}`}
+          </p>
+        </div>
+      )}
+
+      {recusando && (
+        <EncerrarProposta
+          proposal={proposal}
+          recusa
+          onCancelar={() => setRecusando(false)}
+          onPronto={async () => {
+            setRecusando(false)
+            const atualizada = await getProposalRaw(id)
+            setProposal(atualizada)
+          }}
+        />
+      )}
+
       {proposal.closed && (
         <div className="mb-6 p-4 rounded-xl border border-line bg-white">
           <div className="font-medium text-ink text-sm mb-1">Proposta encerrada</div>
@@ -146,7 +171,7 @@ export default function Editor() {
   )
 }
 
-function StatusPills({ proposal, onChange }) {
+function StatusPills({ proposal, onChange, onRecusar }) {
   const status = proposal.status || 'rascunho'
   const STATUS_OPTS = [
     { id: 'rascunho', label: 'Rascunho', color: '#7C8288', bg: '#F1F1EF' },
@@ -156,6 +181,8 @@ function StatusPills({ proposal, onChange }) {
   ]
 
   function setStatus(next) {
+    // recusar aqui é o mesmo caminho do painel: aviso, PDF e motivo antes de encerrar
+    if (next === 'recusada') { onRecusar?.(); return }
     if (next === 'aceita') {
       onChange({ status: next, acceptedValue: proposal.acceptedValue ?? null })
     } else {
