@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { getSettings, saveSettings, getTemplateContent, saveTemplateContent, listProposals, saveProposal, getProposal } from '../lib/db'
+import { getSettings, saveSettings, getTemplateContent, saveTemplateContent, listProposals, saveProposal, getProposal, limparFotosOrfas } from '../lib/db'
 import { DEFAULT_SHARED_TEXT, DEFAULT_IMAGES, TIPOLOGIAS } from '../lib/content'
 
 const TABS = [
@@ -272,10 +272,11 @@ function ImagensDaPropostaTab() {
 
   return (
     <div className="max-w-3xl">
-      <p className="text-sm text-muted mb-6">
+      <p className="text-sm text-muted mb-4">
         Todas as imagens que você já adicionou nos slides de cada proposta aparecem aqui, organizadas por tipologia.
         Trocar uma imagem aqui atualiza direto na apresentação daquela proposta.
       </p>
+      <LimpezaDeFotos onFim={refresh} />
       <div className="flex gap-2 mb-6">
         {TIPOLOGIAS.map((t) => (
           <button
@@ -340,6 +341,48 @@ function ImageGrid({ images }) {
           }} />
         </label>
       ))}
+    </div>
+  )
+}
+
+/**
+ * Varredura das fotos que não são mais usadas por nenhuma proposta nem pelo conteúdo padrão.
+ * Elas ficam guardadas ocupando espaço sem aparecer em lugar nenhum — normalmente sobras de
+ * imagens trocadas ou removidas de um slide. O plano gratuito do Firebase dá 1 GiB para a
+ * conta inteira, então vale passar aqui de vez em quando.
+ */
+function LimpezaDeFotos({ onFim }) {
+  const [rodando, setRodando] = useState(false)
+  const [resultado, setResultado] = useState(null)
+
+  async function limpar() {
+    if (!confirm('Procurar e apagar fotos que nenhuma proposta usa mais? As fotos em uso não são tocadas.')) return
+    setRodando(true)
+    try {
+      const n = await limparFotosOrfas()
+      setResultado(n)
+      onFim?.()
+    } catch (err) {
+      console.error(err)
+      alert('Não consegui concluir a limpeza agora. Tente de novo em alguns instantes.')
+    } finally {
+      setRodando(false)
+    }
+  }
+
+  return (
+    <div className="mb-6 p-3 border border-line rounded-lg bg-white">
+      <button onClick={limpar} disabled={rodando} className="text-sm text-clay font-medium disabled:opacity-50">
+        {rodando ? 'Procurando…' : '🧹 Liberar espaço — apagar fotos sem uso'}
+      </button>
+      {resultado !== null && (
+        <p className="text-xs text-muted mt-1">
+          {resultado > 0 ? `${resultado} foto(s) sem uso foram apagadas.` : 'Nenhuma foto sobrando — está tudo em uso.'}
+        </p>
+      )}
+      <p className="text-[11px] text-muted mt-1">
+        Não alcança fotos de propostas apagadas antes desta versão; essas só saem pelo Console do Firebase.
+      </p>
     </div>
   )
 }

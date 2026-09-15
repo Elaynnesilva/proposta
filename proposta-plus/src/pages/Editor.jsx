@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { getProposal, saveProposal, getSettings, addSavedSwatch, addSavedPalette, removeSavedPalette, listEvents, saveEvent, deleteEvent } from '../lib/db'
+import { getProposalRaw, saveProposal, getSettings, addSavedSwatch, addSavedPalette, removeSavedPalette, listEvents, saveEvent, deleteEvent } from '../lib/db'
 import { parseMoneyBR } from '../lib/fields'
 import DataTable from '../components/DataTable'
 import ColorWheelPicker from '../components/ColorWheelPicker'
@@ -28,7 +28,9 @@ export default function Editor() {
   const [saving, setSaving] = useState(false)
   const [savedTick, setSavedTick] = useState(false)
 
-  useEffect(() => { getProposal(id).then(setProposal) }, [id])
+  // o editor não mostra nenhuma foto (são dados, cores e datas), então carrega a proposta sem
+  // baixar as imagens — era isso que fazia "entrar para editar" demorar vários segundos
+  useEffect(() => { getProposalRaw(id).then(setProposal) }, [id])
 
   const persist = useCallback(async (patch) => {
     setProposal((prev) => {
@@ -106,8 +108,21 @@ export default function Editor() {
 
       <div className="max-w-5xl mx-auto px-6 md:px-10 pb-10">
 
+      {/* proposta encerrada vira consulta: a apresentação e as fotos já foram apagadas, então
+          sobra o registro dos dados do projeto, sem edição. O <fieldset disabled> abaixo
+          desativa todos os campos de uma vez, sem precisar mexer em cada um. */}
+      {proposal.closed && (
+        <div className="mb-6 p-4 rounded-xl border border-line bg-white">
+          <div className="font-medium text-ink text-sm mb-1">Proposta encerrada</div>
+          <p className="text-sm text-muted">
+            Encerrada em {new Date(proposal.closedAt).toLocaleDateString('pt-BR')}. A apresentação e as fotos foram
+            apagadas para liberar espaço. Os dados abaixo ficam guardados para consulta e não podem mais ser alterados.
+          </p>
+        </div>
+      )}
+
       <div className="flex gap-1 mb-8 border-b border-line overflow-x-auto">
-        {TABS.map((t) => (
+        {TABS.filter((t) => !proposal.closed || t.id === 'dados').map((t) => (
           <button
             key={t.id} onClick={() => setTab(t.id)}
             className={`text-sm px-4 py-2.5 whitespace-nowrap border-b-2 -mb-px transition ${tab === t.id ? 'border-clay text-ink font-medium' : 'border-transparent text-muted hover:text-ink'}`}
@@ -115,15 +130,17 @@ export default function Editor() {
         ))}
       </div>
 
-      {tab === 'dados' && (
-        <>
-          <TipologiaPicker proposal={proposal} onChange={persist} />
-          <DataTable fields={proposal.fields || {}} onChange={(fields) => persist({ fields })} />
-        </>
-      )}
-      {tab === 'agendamentos' && <AgendamentosTab proposal={proposal} />}
-      {tab === 'design' && <DesignTab proposal={proposal} onChange={persist} />}
-      {tab === 'precos' && <PricingVisibilityTab proposal={proposal} onChange={persist} />}
+      <fieldset disabled={!!proposal.closed} className={proposal.closed ? 'opacity-75' : ''}>
+        {(tab === 'dados' || proposal.closed) && (
+          <>
+            <TipologiaPicker proposal={proposal} onChange={persist} />
+            <DataTable fields={proposal.fields || {}} onChange={(fields) => persist({ fields })} />
+          </>
+        )}
+        {!proposal.closed && tab === 'agendamentos' && <AgendamentosTab proposal={proposal} />}
+        {!proposal.closed && tab === 'design' && <DesignTab proposal={proposal} onChange={persist} />}
+        {!proposal.closed && tab === 'precos' && <PricingVisibilityTab proposal={proposal} onChange={persist} />}
+      </fieldset>
       </div>
     </>
   )

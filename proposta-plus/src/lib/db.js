@@ -101,6 +101,53 @@ export async function getProposal(id) {
   return hydrateMediaRefs(uid, id, { id: snap.id, ...snap.data() })
 }
 
+/**
+ * Igual à de cima, mas SEM baixar as fotos: devolve a proposta com as referências curtas
+ * intactas. É o que a apresentação usa — ela pede cada foto separadamente, só do slide que
+ * está na tela (ver lib/media.js). Abrir uma proposta deixou de baixar dezenas de MB de uma vez.
+ */
+export async function getProposalRaw(id) {
+  const uid = requireUid()
+  const snap = await getDoc(doc(db, 'users', uid, 'proposals', id))
+  if (!snap.exists()) return null
+  return { id: snap.id, ...snap.data() }
+}
+
+export async function getTemplateContentRaw() {
+  const uid = requireUid()
+  const snap = await getDoc(doc(db, 'users', uid))
+  const data = snap.exists() ? snap.data() : {}
+  return data.content || null
+}
+
+export async function getPublicProposalRaw(uid, id) {
+  const snap = await getDoc(doc(db, 'users', uid, 'proposals', id))
+  if (!snap.exists()) return null
+  return { id: snap.id, ...snap.data() }
+}
+
+export async function getPublicTemplateContentRaw(uid) {
+  const snap = await getDoc(doc(db, 'users', uid))
+  return snap.exists() ? (snap.data().content || {}) : {}
+}
+
+/** Busca UMA foto pela referência curta. Usada pelo carregamento sob demanda. */
+export async function fetchMediaByRef(ref, { uid, proposalId }) {
+  const conta = uid || requireUid()
+  try {
+    if (ref.startsWith(SHARED_MEDIA_PREFIX)) {
+      const snap = await getDoc(doc(db, 'users', conta, 'media', ref.slice(SHARED_MEDIA_PREFIX.length)))
+      return snap.exists() ? snap.data().dataUrl : ''
+    }
+    if (ref.startsWith(MEDIA_PREFIX)) {
+      if (!proposalId) return ''
+      const snap = await getDoc(doc(db, 'users', conta, 'proposals', proposalId, 'media', ref.slice(MEDIA_PREFIX.length)))
+      return snap.exists() ? snap.data().dataUrl : ''
+    }
+  } catch { /* sem permissão ou offline: devolve vazio em vez de quebrar a tela */ }
+  return ''
+}
+
 export async function saveProposal(proposal) {
   const uid = requireUid()
   const { id, ...data } = proposal
@@ -117,9 +164,99 @@ export async function saveProposal(proposal) {
   return { id: snap.id, ...snap.data() }
 }
 
+/**
+ * Apaga a proposta E as fotos dela.
+ *
+ * No Firestore, apagar um documento NÃO apaga as coleções penduradas nele: as fotos ficavam
+ * em proposals/{id}/media sem nenhuma proposta apontando pra elas, invisíveis na tela e
+ * ocupando espaço pra sempre. Por isso a subcoleção é esvaziada ANTES de apagar a proposta —
+ * nessa ordem, porque depois de apagar o documento não dá mais pra chegar até as fotos.
+ */
 export async function deleteProposal(id) {
   const uid = requireUid()
+  await apagarFotosDaProposta(uid, id)
   await deleteDoc(doc(db, 'users', uid, 'proposals', id))
+}
+
+async function apagarFotosDaProposta(uid, proposalId) {
+  const snap = await getDocs(collection(db, 'users', uid, 'proposals', proposalId, 'media'))
+  await Promise.all(snap.docs.map((d) => deleteDoc(d.ref).catch(() => {})))
+  return snap.size
+}
+
+/**
+ * Encerra uma proposta: apaga todas as fotos dela e limpa as referências, mantendo os dados
+ * do projeto (cliente, valores, datas, status). A proposta vira consulta — não dá mais pra
+ * apresentar nem editar, e o espaço das fotos é devolvido.
+ */
+export async function closeProposal(proposal) {
+  const uid = requireUid()
+  const apagadas = await apagarFotosDaProposta(uid, proposal.id)
+  const limpo = removerReferenciasDeFoto(proposal)
+  await saveProposal({ ...limpo, closed: true, closedAt: new Date().toISOString() })
+  return apagadas
+}
+
+/** troca toda referência de foto (e toda foto em base64 que tenha sobrado) por vazio */
+function removerReferenciasDeFoto(value) {
+  if (Array.isArray(value)) return value.map(removerReferenciasDeFoto)
+  if (value && typeof value === 'object' && value.constructor === Object) {
+    const next = {}
+    Object.keys(value).forEach((k) => { next[k] = removerReferenciasDeFoto(value[k]) })
+    return next
+  }
+  if (typeof value === 'string' && (isMediaRef(value) || isSharedMediaRef(value) || value.startsWith('data:image'))) return ''
+  return value
+}
+
+/**
+ * Varredura das fotos que não são mais usadas por ninguém.
+ *
+ * Cobre dois casos: fotos da biblioteca da conta (users/{uid}/media) que nenhuma proposta nem
+ * o conteúdo do modelo referencia mais, e fotos dentro de uma proposta que foram trocadas ou
+ * removidas dos slides. Devolve quantas foram apagadas.
+ *
+ * O que ela NÃO alcança: fotos de propostas que já foram apagadas antes desta correção. O
+ * Firestore não deixa um aplicativo listar as subcoleções de um documento que não existe
+ * mais, então essas só podem ser removidas à mão no Console do Firebase (elas aparecem lá
+ * como documentos em itálico dentro de "proposals").
+ */
+export async function limparFotosOrfas() {
+  const uid = requireUid()
+  const usadas = new Set()
+  const anotar = (value) => {
+    if (Array.isArray(value)) return value.forEach(anotar)
+    if (value && typeof value === 'object' && value.constructor === Object) return Object.values(value).forEach(anotar)
+    if (typeof value === 'string' && (isMediaRef(value) || isSharedMediaRef(value))) usadas.add(value)
+  }
+
+  const userSnap = await getDoc(doc(db, 'users', uid))
+  anotar(userSnap.exists() ? userSnap.data().content : null)
+
+  const propostas = await getDocs(collection(db, 'users', uid, 'proposals'))
+  propostas.docs.forEach((d) => anotar(d.data()))
+
+  let apagadas = 0
+
+  // biblioteca da conta
+  const compartilhadas = await getDocs(collection(db, 'users', uid, 'media'))
+  await Promise.all(compartilhadas.docs.map(async (d) => {
+    if (usadas.has(`${SHARED_MEDIA_PREFIX}${d.id}`)) return
+    await deleteDoc(d.ref).catch(() => {})
+    apagadas++
+  }))
+
+  // fotos dentro de cada proposta que existe
+  for (const prop of propostas.docs) {
+    const fotos = await getDocs(collection(db, 'users', uid, 'proposals', prop.id, 'media'))
+    await Promise.all(fotos.docs.map(async (d) => {
+      if (usadas.has(`${MEDIA_PREFIX}${d.id}`)) return
+      await deleteDoc(d.ref).catch(() => {})
+      apagadas++
+    }))
+  }
+
+  return apagadas
 }
 
 /** Torna uma proposta acessível por link, sem precisar de login (o cliente vendo a apresentação). */

@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recharts'
-import { listProposals, saveProposal, deleteProposal, getSettings } from '../lib/db'
+import { listProposals, saveProposal, deleteProposal, getSettings, closeProposal, limparFotosOrfas } from '../lib/db'
 import { defaultFieldsObject } from '../lib/fields'
 import { DEFAULT_PALETTE } from '../lib/templates'
 
@@ -17,6 +17,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [renamingId, setRenamingId] = useState(null)
   const [valueModalId, setValueModalId] = useState(null)
+  const [encerrarId, setEncerrarId] = useState(null)
   const [settings, setSettings] = useState(null)
   const [search, setSearch] = useState('')
   const [filtersOpen, setFiltersOpen] = useState(false)
@@ -55,6 +56,20 @@ export default function Dashboard() {
       customSlides: [],
     })
     navigate(`/proposta/${saved.id}/editar`)
+  }
+
+  /**
+   * Encerramento da proposta: apaga as fotos e a apresentação, mantendo os dados do projeto.
+   * É o que devolve espaço — as fotos são quase todo o peso de uma proposta, e o plano
+   * gratuito do Firebase tem 1 GiB no total para a conta inteira.
+   */
+  async function encerrar(p) {
+    const apagadas = await closeProposal(p)
+    setEncerrarId(null)
+    await refresh()
+    alert(apagadas > 0
+      ? `Proposta encerrada. ${apagadas} foto(s) foram apagadas e o espaço foi liberado.`
+      : 'Proposta encerrada.')
   }
 
   async function updateStatus(p, status, acceptedValue) {
@@ -227,11 +242,32 @@ export default function Dashboard() {
                 </div>
               )}
 
+              {/* proposta encerrada é só consulta: fica o acesso aos dados do projeto, sem
+                  apresentação e sem edição — a apresentação e as fotos já não existem mais */}
               <div className="flex gap-2 mb-4 flex-wrap">
-                <button onClick={() => navigate(`/proposta/${p.id}/editar`)} className="text-xs px-3 py-1.5 rounded-full border border-line hover:bg-sand">Editar</button>
-                <button onClick={() => navigate(`/proposta/${p.id}/apresentar`)} className="text-xs px-3 py-1.5 rounded-full bg-ink text-white hover:opacity-90">Apresentar</button>
+                <button onClick={() => navigate(`/proposta/${p.id}/editar`)} className="text-xs px-3 py-1.5 rounded-full border border-line hover:bg-sand">
+                  {p.closed ? 'Ver dados do projeto' : 'Editar'}
+                </button>
+                {!p.closed && (
+                  <button onClick={() => navigate(`/proposta/${p.id}/apresentar`)} className="text-xs px-3 py-1.5 rounded-full bg-ink text-white hover:opacity-90">Apresentar</button>
+                )}
                 <button onClick={() => remove(p.id)} className="text-xs px-3 py-1.5 rounded-full text-red-600 hover:bg-red-50 ml-auto">Excluir</button>
               </div>
+
+              {p.closed && (
+                <div className="text-[11px] text-muted mb-3 p-2 rounded-lg bg-sand">
+                  Encerrada em {new Date(p.closedAt).toLocaleDateString('pt-BR')} — apresentação e fotos apagadas para liberar espaço.
+                </div>
+              )}
+
+              {/* aceita e já passou da data de entrega: hora de encerrar e devolver o espaço */}
+              {!p.closed && p.status === 'aceita' && entregaVencida(p) && (
+                <button
+                  onClick={() => setEncerrarId(p.id)}
+                  className="w-full text-xs py-2.5 rounded-lg mb-3 font-medium text-white"
+                  style={{ background: '#B45309' }}
+                >📦 Encerrar proposta e liberar espaço</button>
+              )}
 
               <div className="mt-auto pt-3 border-t border-line flex gap-2">
                 <button
@@ -239,7 +275,7 @@ export default function Dashboard() {
                   className={`flex-1 text-xs py-1.5 rounded-full ${p.status === 'aceita' ? 'bg-[#EAF7EE] text-[#16803C]' : 'border border-line text-ink/70 hover:bg-sand'}`}
                 >Aceita</button>
                 <button
-                  onClick={() => updateStatus(p, 'recusada')}
+                  onClick={() => (p.status === 'recusada' || p.closed ? null : setEncerrarId(p.id))}
                   className={`flex-1 text-xs py-1.5 rounded-full ${p.status === 'recusada' ? 'bg-[#FDEEEC] text-[#B42318]' : 'border border-line text-ink/70 hover:bg-sand'}`}
                 >Recusada</button>
               </div>
@@ -248,6 +284,19 @@ export default function Dashboard() {
                 <AcceptValueForm
                   defaultValue={p.acceptedValue}
                   onConfirm={(val) => updateStatus(p, 'aceita', val)}
+                />
+              )}
+
+              {encerrarId === p.id && (
+                <EncerrarModal
+                  proposal={p}
+                  recusa={p.status !== 'aceita'}
+                  onBaixarPdf={() => navigate(`/proposta/${p.id}/apresentar?exportarPdf=1`)}
+                  onCancelar={() => setEncerrarId(null)}
+                  onConfirmar={async () => {
+                    if (p.status !== 'aceita') await saveProposal({ ...p, status: 'recusada', acceptedValue: undefined })
+                    await encerrar({ ...p, status: p.status === 'aceita' ? 'aceita' : 'recusada' })
+                  }}
                 />
               )}
             </div>
@@ -320,6 +369,80 @@ function AcceptValueForm({ defaultValue, onConfirm }) {
         onClick={() => value !== '' && onConfirm(Number(value))}
         className="text-xs px-3 rounded-lg bg-clay text-white"
       >OK</button>
+    </div>
+  )
+}
+
+/**
+ * Data de entrega do projeto (o "Fim do Projeto" do pacote contratado, ou o mais distante
+ * entre os pacotes). É a partir dela que a proposta aceita passa a oferecer o encerramento —
+ * antes disso a apresentação ainda pode ser útil.
+ */
+function entregaVencida(p) {
+  const fields = p.fields || {}
+  const datas = ['completo', 'basico', 'essencial']
+    .map((id) => parseDataBR(fields[`${id}Fim`]))
+    .filter(Boolean)
+  if (!datas.length) return false
+  const ultima = new Date(Math.max(...datas.map((d) => d.getTime())))
+  return ultima.getTime() < Date.now()
+}
+
+function parseDataBR(valor) {
+  const m = String(valor || '').match(/(\d{2})\/(\d{2})\/(\d{4})/)
+  if (!m) return null
+  const d = new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]))
+  return isNaN(d) ? null : d
+}
+
+/**
+ * Aviso antes de encerrar. O botão de confirmar só destrava depois que um PDF da proposta
+ * foi gerado — encerrar apaga a apresentação e as fotos para sempre, e o PDF é a única cópia
+ * que sobra. Vale tanto para a recusa quanto para o encerramento de uma proposta aceita.
+ */
+function EncerrarModal({ proposal, recusa, onBaixarPdf, onCancelar, onConfirmar }) {
+  const temPdf = !!proposal.pdfExportedAt
+  const [salvando, setSalvando] = useState(false)
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-6" onClick={onCancelar}>
+      <div className="bg-white rounded-xl p-5 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+        <h3 className="font-semibold text-ink mb-2">
+          {recusa ? 'Marcar como recusada' : 'Encerrar proposta'}
+        </h3>
+        <p className="text-sm text-ink/80 mb-3">
+          {recusa
+            ? 'Após registrar esta proposta como recusada, a apresentação e novas edições ficarão indisponíveis.'
+            : 'Ao encerrar, a apresentação e novas edições ficarão indisponíveis.'}
+          {' '}As fotos serão apagadas e os dados do projeto continuam disponíveis para consulta.
+        </p>
+        <p className="text-sm text-ink/80 mb-4">
+          Baixe o PDF da proposta para salvá-la — é a única cópia da apresentação que vai restar.
+          {!recusa && ' Encerrar libera espaço na memória para novas propostas.'}
+        </p>
+
+        {temPdf ? (
+          <p className="text-xs mb-4 p-2 rounded-lg bg-[#EAF7EE] text-[#16803C]">
+            PDF gerado em {new Date(proposal.pdfExportedAt).toLocaleDateString('pt-BR')}. Você pode encerrar.
+          </p>
+        ) : (
+          <button onClick={onBaixarPdf} className="w-full text-sm py-2.5 rounded-lg bg-ink text-white font-medium mb-3">
+            ⇩ Baixar o PDF
+          </button>
+        )}
+
+        <div className="flex gap-2">
+          <button onClick={onCancelar} className="flex-1 text-sm py-2.5 rounded-lg border border-line text-muted">Cancelar</button>
+          <button
+            disabled={!temPdf || salvando}
+            onClick={async () => { setSalvando(true); try { await onConfirmar() } finally { setSalvando(false) } }}
+            className="flex-1 text-sm py-2.5 rounded-lg text-white font-medium disabled:opacity-40"
+            style={{ background: recusa ? '#B42318' : '#B45309' }}
+          >
+            {salvando ? 'Encerrando…' : (recusa ? 'Marcar como recusada' : 'Encerrar proposta')}
+          </button>
+        </div>
+        {!temPdf && <p className="text-[11px] text-muted mt-2">O botão libera assim que o PDF for gerado.</p>}
+      </div>
     </div>
   )
 }

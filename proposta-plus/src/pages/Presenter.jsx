@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { getProposal, getSettings, getTemplateContent, saveProposal, saveTemplateContent, getPublicProposal, getPublicSettings, getPublicTemplateContent, setProposalPublic, saveImageAsMedia } from '../lib/db'
+import { getProposalRaw, getSettings, getTemplateContentRaw, saveProposal, saveTemplateContent, getPublicProposalRaw, getPublicSettings, getPublicTemplateContentRaw, setProposalPublic, saveImageAsMedia, fetchMediaByRef } from '../lib/db'
+import { carregarFotos, coletarRefs, aplicarFotos } from '../lib/media'
 import { auth } from '../lib/firebase'
 import { buildSlides } from '../lib/slides'
 import { DEFAULT_IMAGES, DEFAULT_SHARED_TEXT } from '../lib/content'
@@ -121,6 +122,7 @@ export default function Presenter() {
   const [exportIndex, setExportIndex] = useState(0)
   const [linkCopied, setLinkCopied] = useState(false)
   const [linkModalUrl, setLinkModalUrl] = useState('')
+  const exportouAutomatico = useRef(false)
   // id do slide recém-criado pelo botão "+ Novo slide": assim que ele aparecer na lista,
   // a apresentação pula pra ele e já abre o painel de edição
   const [slideNovoId, setSlideNovoId] = useState(null)
@@ -219,15 +221,36 @@ export default function Presenter() {
 
   useEffect(() => {
     if (isPublic) {
-      getPublicProposal(publicUid, id).then(setProposal)
+      getPublicProposalRaw(publicUid, id).then(setProposal)
       getPublicSettings(publicUid).then(setSettings)
-      getPublicTemplateContent(publicUid).then(setTemplateContent)
+      getPublicTemplateContentRaw(publicUid).then(setTemplateContent)
     } else {
-      getProposal(id).then(setProposal)
+      getProposalRaw(id).then(setProposal)
       getSettings().then(setSettings)
-      getTemplateContent().then(setTemplateContent)
+      getTemplateContentRaw().then(setTemplateContent)
     }
   }, [id, isPublic, publicUid])
+
+  /**
+   * Carregamento das fotos sob demanda.
+   *
+   * A proposta e o conteúdo do modelo chegam com as referências curtas, sem as fotos. Aqui a
+   * gente baixa só as do slide que está na tela (e as do seguinte, pra virada não ter espera),
+   * guardando cada uma em cache — na memória e no navegador. Nas próximas aberturas, elas já
+   * estão prontas e não custam nem transferência nem tempo.
+   */
+  const contaDasFotos = isPublic ? publicUid : auth.currentUser?.uid
+  const [fotosVersao, setFotosVersao] = useState(0)
+
+  const pedirFotos = useCallback(async (refs) => {
+    if (!contaDasFotos || !refs.length) return
+    const mudou = await carregarFotos(refs, {
+      uid: contaDasFotos,
+      proposalId: id,
+      buscarNoBanco: (ref) => fetchMediaByRef(ref, { uid: contaDasFotos, proposalId: id }),
+    })
+    if (mudou) setFotosVersao((v) => v + 1)
+  }, [contaDasFotos, id])
 
   const content = { ...DEFAULT_SHARED_TEXT, ...(templateContent?.shared || {}) }
   const images = proposal
@@ -301,7 +324,7 @@ export default function Presenter() {
     return saida
   }, [baseSlides, copias])
 
-  const slides = useMemo(() => {
+  const slidesMontados = useMemo(() => {
     // ORDEM DE PRECEDÊNCIA das edições de slide, da mais geral para a mais específica:
     //   1. o slide "de fábrica" montado a partir dos dados da proposta (buildSlides)
     //   2. o que foi salvo para TODOS os tipos de projeto (slideDefaults.all)
@@ -341,10 +364,33 @@ export default function Presenter() {
     return list
   }, [baseSlidesComCopias, templateContent, proposal?.tipologia, proposal?.slideOverrides, proposal?.slideOrder])
 
+  /**
+   * Duas listas: a "crua", que ainda tem as referências curtas (é dela que sabemos QUAIS fotos
+   * um slide precisa), e a final, com as fotos que já chegaram no lugar. O que ainda não
+   * chegou fica vazio — o slide desenha o espaço em branco e se redesenha quando a foto vem.
+   */
+  const slidesBrutos = slidesMontados
+  const slides = useMemo(
+    () => aplicarFotos(slidesMontados, contaDasFotos, id),
+    [slidesMontados, contaDasFotos, id, fotosVersao],
+  )
+
   // páginas ocultadas pela pessoa ficam fora da apresentação e do PDF, mas continuam
   // listadas (esmaecidas) na barra lateral, prontas para serem reativadas quando quiser
   const hiddenIds = useMemo(() => new Set(proposal?.hiddenSlides || []), [proposal?.hiddenSlides])
   const visibleSlides = useMemo(() => slides.filter((s) => !hiddenIds.has(s.id)), [slides, hiddenIds])
+
+  /**
+   * Pede as fotos do slide atual e do seguinte (a virada fica sem espera). Como as referências
+   * são apagadas na montagem acima, a lista "crua" de onde tirar as referências é a de antes
+   * da troca — por isso olhamos o slide correspondente em slidesBrutos.
+   */
+  useEffect(() => {
+    if (!slidesBrutos.length) return
+    const alvoIds = [visibleSlides[index]?.id, visibleSlides[index + 1]?.id].filter(Boolean)
+    const alvos = slidesBrutos.filter((s) => alvoIds.includes(s.id))
+    pedirFotos(coletarRefs(alvos))
+  }, [slidesBrutos, visibleSlides, index, pedirFotos])
 
   // sempre que a lista de slides visíveis muda de tamanho (ao ocultar um slide, reordenar, etc.)
   // garante que o índice atual continua dentro dos limites — sem isso, ocultar o slide que
@@ -710,9 +756,26 @@ export default function Presenter() {
     setSlideNovoId(novo.id)
   }
 
+  /**
+   * Quando o painel manda a pessoa baixar o PDF antes de encerrar a proposta, ele abre a
+   * apresentação com ?exportarPdf=1. A geração começa sozinha e, ao terminar, fica registrado
+   * na proposta que o PDF foi gerado — é isso que destrava o botão de encerrar lá no painel.
+   */
+  useEffect(() => {
+    if (!proposal || !settings || exporting) return
+    if (new URLSearchParams(window.location.hash.split('?')[1] || '').get('exportarPdf') !== '1') return
+    if (exportouAutomatico.current) return
+    exportouAutomatico.current = true
+    handleExportPdf()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [proposal, settings])
+
   async function handleExportPdf() {
     setExporting(true)
     try {
+      // o PDF fotografa todos os slides, então aqui — e só aqui — as fotos são baixadas de
+      // uma vez. Fora disso, cada slide busca as suas quando entra na tela.
+      await pedirFotos(coletarRefs(slidesBrutos))
       const { default: html2canvas } = await import('html2canvas')
       const { jsPDF } = await import('jspdf')
       let pdf = null
@@ -743,6 +806,10 @@ export default function Presenter() {
       }
       if (!pdf) throw new Error('Nenhum slide pôde ser capturado')
       pdf.save(exportFileName(proposal))
+      // fica registrado que existe um PDF desta proposta — é o que destrava "Encerrar
+      // proposta" no painel. O app não tem como saber se o arquivo foi guardado numa pasta;
+      // o que ele sabe, e é o que importa aqui, é que o PDF chegou a ser gerado e baixado.
+      if (!isPublic) updateProposal((prev) => ({ ...prev, pdfExportedAt: new Date().toISOString() }))
     } catch (err) {
       alert('Não consegui gerar o PDF agora. Tente de novo em alguns segundos.')
       console.error(err)
