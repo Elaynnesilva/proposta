@@ -60,3 +60,26 @@ body {
 @media print {
   .no-print { display: none !important; }
 }
+
+/*
+ * Tamanho dos textos do slide, escolhido em "Editar slide".
+ *
+ * As duas variáveis chegam na raiz do slide (ver escalaDeFonte no Presenter) e aqui os
+ * tamanhos do Tailwind usados no desenho são multiplicados por elas. Fazer assim evita ter
+ * que carregar a escolha até cada título, descrição e tópico espalhado por ~20 tipos de
+ * slide: a regra pega todos de uma vez, e um slide sem escolha fica com a escala 1 (igual
+ * ao que sempre foi).
+ */
+.esc-fonte { --esc-titulo: 1; --esc-texto: 1; }
+
+.esc-fonte .text-2xl { font-size: calc(1.5rem   * var(--esc-titulo)); line-height: 1.25; }
+.esc-fonte .text-3xl { font-size: calc(1.875rem * var(--esc-titulo)); line-height: 1.2; }
+.esc-fonte .text-4xl { font-size: calc(2.25rem  * var(--esc-titulo)); line-height: 1.15; }
+.esc-fonte .text-5xl { font-size: calc(3rem     * var(--esc-titulo)); line-height: 1.1; }
+
+.esc-fonte .text-\[11px\] { font-size: calc(11px    * var(--esc-texto)); }
+.esc-fonte .text-xs      { font-size: calc(0.75rem * var(--esc-texto)); }
+.esc-fonte .text-sm      { font-size: calc(0.875rem * var(--esc-texto)); }
+.esc-fonte .text-base    { font-size: calc(1rem    * var(--esc-texto)); }
+.esc-fonte .text-lg      { font-size: calc(1.125rem * var(--esc-texto)); }
+.esc-fonte .text-xl      { font-size: calc(1.25rem * var(--esc-texto)); }

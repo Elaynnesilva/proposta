@@ -8,6 +8,13 @@ const NAV = [
   { to: '/agenda', label: 'Agenda', icon: '📅' },
 ]
 
+/** Link externo (abre fora do app), logo abaixo dos itens do menu */
+const GRUPO_WHATSAPP = {
+  href: 'https://chat.whatsapp.com/GAV72DoIG1JJHgw9VUK6S7',
+  label: 'Arquitetos de valor',
+  icon: '💎',
+}
+
 export default function Layout({ user, children }) {
   const navigate = useNavigate()
 
@@ -34,6 +41,12 @@ export default function Layout({ user, children }) {
                 <span>{n.icon}</span>{n.label}
               </NavLink>
             ))}
+            <a
+              href={GRUPO_WHATSAPP.href} target="_blank" rel="noreferrer"
+              className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-ink/70 hover:bg-sand transition"
+            >
+              <span>{GRUPO_WHATSAPP.icon}</span>{GRUPO_WHATSAPP.label}
+            </a>
           </nav>
         </div>
         <div className="p-4 border-t border-line">
@@ -63,6 +76,12 @@ export default function Layout({ user, children }) {
             <span className="text-lg leading-none">{n.icon}</span>{n.label}
           </NavLink>
         ))}
+        <a
+          href={GRUPO_WHATSAPP.href} target="_blank" rel="noreferrer"
+          className="flex-1 flex flex-col items-center gap-0.5 py-2.5 text-xs text-muted"
+        >
+          <span className="text-lg leading-none">{GRUPO_WHATSAPP.icon}</span>Arq. de valor
+        </a>
       </nav>
     </div>
   )

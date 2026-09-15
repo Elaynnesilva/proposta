@@ -1376,6 +1376,8 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
   const [embedUrl, setEmbedUrl] = useState(slide.embedUrl || '')
   const [uploadingCount, setUploadingCount] = useState(0)
   const [scopePopup, setScopePopup] = useState(false)
+  const [titleScale, setTitleScale] = useState(Number(slide.titleScale) || 100)
+  const [textScale, setTextScale] = useState(Number(slide.textScale) || 100)
 
   /** Comprime a foto e devolve o base64 pronto pra pré-visualizar aqui no painel — bem rápido,
    *  tudo local, sem rede. O envio de verdade pro Firestore só acontece quando a pessoa aperta
@@ -1414,6 +1416,8 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
     setNoImage(!!slide.noImage)
     setImagePosition(slide.imagePosition || 'left')
     setKicker(slide.kicker || '')
+    setTitleScale(Number(slide.titleScale) || 100)
+    setTextScale(Number(slide.textScale) || 100)
     setCoverImage({ url: slide.image || '', posX: slide.imagePosX, posY: slide.imagePosY })
     setObjetivoProjeto(slide.objetivoProjeto || '')
     setHidePayments(!!slide.hidePayments)
@@ -1458,6 +1462,8 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
     }
 
     const patch = slide.type === 'closing' ? { title, quote, author } : { title }
+    patch.titleScale = titleScale
+    patch.textScale = textScale
     if (items) patch.items = items
     if (slide.type === 'divider') { patch.subtitle = subtitle }
     if (slide.type === 'journeyFlow') { patch.subtitle = subtitle }
@@ -1519,6 +1525,12 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
       <div className="flex items-center justify-between mb-4">
         <h3 className="font-medium">Editar este slide</h3>
         <button onClick={onClose} className="text-muted text-sm">✕</button>
+      </div>
+
+      <div className="mb-4 p-3 border border-line rounded-lg bg-sand">
+        <div className="text-xs font-medium text-ink mb-2">Tamanho dos textos deste slide</div>
+        <EscalaSlider label="Títulos" value={titleScale} onChange={setTitleScale} />
+        <EscalaSlider label="Descrição, tópicos e demais textos" value={textScale} onChange={setTextScale} />
       </div>
 
       <label className="text-xs font-medium text-ink/70 block mb-1">Título</label>
@@ -2000,6 +2012,16 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
   )
 }
 
+function EscalaSlider({ label, value, onChange }) {
+  return (
+    <div className="flex items-center gap-2 mb-1.5">
+      <span className="text-[11px] text-muted flex-1">{label}</span>
+      <input type="range" min="60" max="180" step="5" value={value} onChange={(e) => onChange(Number(e.target.value))} className="w-24 shrink-0" />
+      <span className="text-[11px] text-ink w-9 text-right shrink-0">{value}%</span>
+    </div>
+  )
+}
+
 /** Pop-up que aparece a cada "Salvar": onde esta edição deve valer. */
 function ScopePopup({ slide, proposal, isVideo, value, onChange, onConfirm, onCancel }) {
   const opcoes = [
@@ -2196,7 +2218,28 @@ function slideColors(slide, fallbackBg, c1) {
  * da imagem, marcada como "hidden md:block", simplesmente sumia (a foto aparecia na edição
  * do slide mas não aparecia no slide). Aqui dentro use sempre o valor de computador direto.
  */
-function SlideView({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
+/**
+ * Escala de fonte do slide. Em vez de mexer no tamanho de cada texto um por um (são dezenas
+ * de lugares espalhados por ~20 tipos de slide), a escolha entra como duas variáveis de CSS
+ * na raiz do slide; o index.css multiplica por elas os tamanhos de texto usados no desenho.
+ * Assim vale para título, descrição, tópicos e textos de qualquer slide, de uma vez só.
+ */
+function escalaDeFonte(slide) {
+  return {
+    '--esc-titulo': (Number(slide.titleScale) || 100) / 100,
+    '--esc-texto': (Number(slide.textScale) || 100) / 100,
+  }
+}
+
+function SlideView(props) {
+  return (
+    <div className="esc-fonte w-full h-full" style={escalaDeFonte(props.slide)}>
+      <SlideBody {...props} />
+    </div>
+  )
+}
+
+function SlideBody({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
   const t2 = readableTextColor(c2)
   // se a cor de destaque (c1) não tiver contraste suficiente sobre o fundo (c2),
   // usamos automaticamente a cor de texto legível no lugar — nunca mais texto "sumindo"
@@ -2413,13 +2456,17 @@ function SlideView({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
     case 'feedbacks': {
       const { bg, heading, titleColor } = slideColors(slide, INK, c1)
       return (
-        <div className="w-full h-full p-16 flex flex-col justify-center" style={{ background: bg }}>
-          <h2 className="text-4xl mb-10" style={{ ...titleStyle, color: titleColor }}>{slide.title}</h2>
-          <div className="grid grid-cols-3 gap-4">
+        /* os cards precisam de uma altura definida: o print é desenhado como FUNDO do card
+           (é assim que ele sai certo no PDF), e fundo não tem altura própria como uma <img>.
+           Sem isso o card com print virava uma faixa de altura zero e o slide ficava só com
+           o título. Com a faixa em flex-1 e as linhas em 1fr, todo card tem altura real. */
+        <div className="w-full h-full p-16 flex flex-col" style={{ background: bg }}>
+          <h2 className="text-4xl mb-8 shrink-0" style={{ ...titleStyle, color: titleColor }}>{slide.title}</h2>
+          <div className="grid grid-cols-3 gap-4 flex-1 min-h-0" style={{ gridAutoRows: 'minmax(0, 1fr)' }}>
             {slide.items.map((fb, i) => (
               <Reveal key={i} i={i} revealCount={revealCount} className="overflow-hidden" style={{ borderRadius: radius, background: heading === '#FFFFFF' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)' }}>
                 {fb.printUrl ? (
-                  <div className="w-full h-full" style={coverBg(fb.printUrl, `${fb.printPosX ?? 50}% ${fb.printPosY ?? 50}%`)} />
+                  <div className="w-full h-full" style={{ minHeight: 200, ...coverBg(fb.printUrl, `${fb.printPosX ?? 50}% ${fb.printPosY ?? 50}%`) }} />
                 ) : (
                   <div className="p-5">
                     <div className="flex items-center gap-3 mb-3">
