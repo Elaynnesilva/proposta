@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import {
-  lerConfigAcesso, salvarConfigAcesso, listarAcessos, apagarAcesso,
-  separarEmails, normalizarEmail, SUPORTE_PADRAO,
+  lerConfigAcesso, salvarConfigAcesso, listarAcessos,
+  separarEmails, normalizarEmail, SUPORTE_PADRAO, marcarParaZerar,
 } from '../lib/acesso'
 
 const ABAS = [
@@ -46,6 +46,11 @@ export default function Usuarios() {
     return mapa
   }, [acessos])
 
+  const colaboradores = useMemo(
+    () => new Set((config?.suporte?.colaboradores || []).map(normalizarEmail)),
+    [config],
+  )
+
   const emailsAutorizados = useMemo(
     () => new Set((config?.autorizados || []).map((a) => normalizarEmail(a.email))),
     [config],
@@ -56,14 +61,25 @@ export default function Usuarios() {
   )
 
   // quem entrou e ainda não está em nenhuma lista está em teste
-  const emTeste = useMemo(
-    () => acessos.filter((a) => {
+  const emTeste = useMemo(() => {
+    const principal = normalizarEmail(config?.suporte?.emailPrincipal)
+    const mapa = new Map()
+    // quem já fez login entra pelo próprio cadastro
+    acessos.forEach((a) => {
       const e = normalizarEmail(a.email)
-      if (!e || e === normalizarEmail(config?.suporte?.emailPrincipal)) return false
-      return !emailsAutorizados.has(e) && !emailsExcluidos.has(e)
-    }),
-    [acessos, emailsAutorizados, emailsExcluidos, config],
-  )
+      if (!e || e === principal) return
+      if (emailsAutorizados.has(e) || emailsExcluidos.has(e)) return
+      mapa.set(e, a)
+    })
+    // e quem foi colocado em teste sem nunca ter entrado (ex: veio dos autorizados)
+    ;(config?.teste || []).forEach((t) => {
+      const e = normalizarEmail(t.email)
+      if (!e || e === principal) return
+      if (emailsAutorizados.has(e) || emailsExcluidos.has(e) || mapa.has(e)) return
+      mapa.set(e, { email: e, desde: t.desde })
+    })
+    return [...mapa.values()]
+  }, [acessos, emailsAutorizados, emailsExcluidos, config])
 
   if (!config) return <div className="p-6 text-sm text-muted">Carregando…</div>
 
@@ -85,16 +101,13 @@ export default function Usuarios() {
       </div>
 
       {aba === 'autorizados' && (
-        <AbaAutorizados config={config} porEmail={porEmail} onGravar={gravar} salvando={salvando} />
+        <AbaAutorizados config={config} porEmail={porEmail} colaboradores={colaboradores} onGravar={gravar} />
       )}
       {aba === 'teste' && (
-        <AbaTeste
-          emTeste={emTeste} config={config} onGravar={gravar}
-          onRecarregar={recarregar}
-        />
+        <AbaTeste emTeste={emTeste} config={config} colaboradores={colaboradores} onGravar={gravar} />
       )}
       {aba === 'excluidos' && (
-        <AbaExcluidos config={config} porEmail={porEmail} onGravar={gravar} onRecarregar={recarregar} />
+        <AbaExcluidos config={config} porEmail={porEmail} colaboradores={colaboradores} onGravar={gravar} onRecarregar={recarregar} />
       )}
       {aba === 'suporte' && <AbaSuporte config={config} onGravar={gravar} salvando={salvando} />}
     </div>
@@ -103,7 +116,7 @@ export default function Usuarios() {
 
 /* ---------------- Autorizados ---------------- */
 
-function AbaAutorizados({ config, porEmail, onGravar }) {
+function AbaAutorizados({ config, porEmail, colaboradores, onGravar }) {
   const [colagem, setColagem] = useState('')
 
   function adicionar() {
@@ -115,13 +128,25 @@ function AbaAutorizados({ config, porEmail, onGravar }) {
     if (!adicionados.length) { setColagem(''); return alert('Todos esses e-mails já estavam autorizados.') }
     // sai da lixeira quem estiver sendo autorizado agora
     const excluidos = (config.excluidos || []).filter((a) => !novos.includes(normalizarEmail(a.email)))
-    onGravar({ autorizados: [...atuais, ...adicionados], excluidos })
+    const teste = (config.teste || []).filter((a) => !novos.includes(normalizarEmail(a.email)))
+    onGravar({ autorizados: [...atuais, ...adicionados], excluidos, teste })
     setColagem('')
   }
 
-  function remover(email) {
-    if (!confirm(`Tirar ${email} dos autorizados? Ele volta a contar como teste.`)) return
-    onGravar({ autorizados: (config.autorizados || []).filter((a) => normalizarEmail(a.email) !== normalizarEmail(email)) })
+  /**
+   * Tirar dos autorizados coloca o e-mail na lista de teste EXPLICITAMENTE. Sem isso, um
+   * e-mail cadastrado por colagem, que nunca chegou a fazer login, simplesmente sumia da tela:
+   * ele não estava mais nos autorizados e também não tinha cadastro próprio pra aparecer em
+   * teste. A contagem dos dias começa agora.
+   */
+  function moverParaTeste(email) {
+    const e = normalizarEmail(email)
+    if (!confirm(`Mover ${email} para teste? Ele volta a ter o período de avaliação.`)) return
+    const teste = (config.teste || []).filter((a) => normalizarEmail(a.email) !== e)
+    onGravar({
+      autorizados: (config.autorizados || []).filter((a) => normalizarEmail(a.email) !== e),
+      teste: [...teste, { email: e, desde: new Date().toISOString() }],
+    })
   }
 
   return (
@@ -137,7 +162,8 @@ function AbaAutorizados({ config, porEmail, onGravar }) {
       <TabelaUsuarios
         linhas={(config.autorizados || []).map((a) => ({ ...porEmail.get(normalizarEmail(a.email)), email: a.email, desde: a.desde }))}
         vazio="Nenhum e-mail autorizado ainda."
-        acao={(l) => <button onClick={() => remover(l.email)} className="text-xs text-red-600 hover:underline">remover</button>}
+        colaboradores={colaboradores}
+        acao={(l) => <button onClick={() => moverParaTeste(l.email)} className="text-xs text-clay hover:underline">mover para teste</button>}
       />
     </div>
   )
@@ -145,7 +171,7 @@ function AbaAutorizados({ config, porEmail, onGravar }) {
 
 /* ---------------- Teste ---------------- */
 
-function AbaTeste({ emTeste, config, onGravar }) {
+function AbaTeste({ emTeste, config, colaboradores, onGravar }) {
   const dias = Number(config.suporte?.diasTeste) || 30
 
   function diasRestantes(a) {
@@ -155,14 +181,22 @@ function AbaTeste({ emTeste, config, onGravar }) {
   }
 
   function autorizar(email) {
+    const e = normalizarEmail(email)
     const atuais = config.autorizados || []
-    if (atuais.some((a) => normalizarEmail(a.email) === normalizarEmail(email))) return
-    onGravar({ autorizados: [...atuais, { email: normalizarEmail(email), desde: new Date().toISOString() }] })
+    if (atuais.some((a) => normalizarEmail(a.email) === e)) return
+    onGravar({
+      autorizados: [...atuais, { email: e, desde: new Date().toISOString() }],
+      teste: (config.teste || []).filter((a) => normalizarEmail(a.email) !== e),
+    })
   }
 
   function excluir(email) {
+    const e = normalizarEmail(email)
     if (!confirm(`Bloquear ${email}? Ele não vai mais conseguir entrar, nem como teste.`)) return
-    onGravar({ excluidos: [...(config.excluidos || []), { email: normalizarEmail(email), em: new Date().toISOString() }] })
+    onGravar({
+      excluidos: [...(config.excluidos || []), { email: e, em: new Date().toISOString() }],
+      teste: (config.teste || []).filter((a) => normalizarEmail(a.email) !== e),
+    })
   }
 
   return (
@@ -175,6 +209,7 @@ function AbaTeste({ emTeste, config, onGravar }) {
         linhas={emTeste.map((a) => ({ ...a, restantes: diasRestantes(a) }))}
         vazio="Ninguém em teste no momento."
         corDaLinha={(l) => (l.restantes <= 0 ? '#B42318' : undefined)}
+        colaboradores={colaboradores}
         colunaExtra={{ titulo: 'Teste', valor: (l) => (l.restantes > 0 ? `faltam ${l.restantes} dia(s)` : 'encerrado') }}
         acao={(l) => (
           <span className="flex gap-2 justify-end">
@@ -189,35 +224,66 @@ function AbaTeste({ emTeste, config, onGravar }) {
 
 /* ---------------- Excluídos ---------------- */
 
-function AbaExcluidos({ config, porEmail, onGravar, onRecarregar }) {
+function AbaExcluidos({ config, porEmail, colaboradores, onGravar, onRecarregar }) {
   const lista = config.excluidos || []
 
   function restaurar(email) {
     onGravar({ excluidos: lista.filter((a) => normalizarEmail(a.email) !== normalizarEmail(email)) })
   }
 
+  /**
+   * Apaga o CADASTRO da pessoa: o espaço dela é zerado (propostas, fotos, agenda e
+   * configurações) e o período de teste recomeça do zero. Diferente de "restaurar", que
+   * devolve o acesso com tudo como estava.
+   *
+   * A limpeza em si acontece no próximo login dela, feita pelo aplicativo dela — a
+   * administradora não tem, e não deve ter, permissão de leitura sobre os dados de ninguém.
+   * Se a pessoa nunca mais entrar, os dados dela continuam ocupando espaço e só saem pelo
+   * Console do Firebase.
+   */
+  async function excluirCadastro(email) {
+    const e = normalizarEmail(email)
+    if (!confirm(`Excluir o cadastro de ${email}?\n\nTudo o que ele criou será apagado quando ele entrar de novo, e o período de teste recomeça do zero.`)) return
+    const registro = porEmail.get(e)
+    if (registro?.uid) await marcarParaZerar(registro.uid)
+    onGravar({
+      excluidos: lista.filter((a) => normalizarEmail(a.email) !== e),
+      teste: (config.teste || []).filter((a) => normalizarEmail(a.email) !== e),
+      autorizados: (config.autorizados || []).filter((a) => normalizarEmail(a.email) !== e),
+    })
+    onRecarregar()
+  }
+
   async function esvaziar() {
-    if (!confirm('Esvaziar a lixeira? Os e-mails somem da lista e voltam a poder entrar como teste.')) return
-    await Promise.all(lista.map(async (a) => {
-      const registro = porEmail.get(normalizarEmail(a.email))
-      if (registro?.uid) await apagarAcesso(registro.uid)
-    }))
+    if (!confirm('Esvaziar a lixeira? Os e-mails saem da lista e voltam a poder entrar como teste, com o histórico que já tinham.')) return
     onGravar({ excluidos: [] })
     onRecarregar()
   }
 
   return (
     <div>
+      <p className="text-sm text-muted mb-1">
+        Não conseguem entrar, nem como teste.
+      </p>
       <p className="text-sm text-muted mb-4">
-        Não conseguem entrar, nem como teste. Restaurar devolve o e-mail ao estado de teste.
+        <strong>Restaurar</strong> devolve o acesso com o histórico intacto.{' '}
+        <strong>Excluir cadastro</strong> zera o espaço dele: tudo o que criou é apagado no próximo
+        login e o período de teste recomeça. Se ele nunca mais entrar, os dados só saem pelo Console
+        do Firebase.
       </p>
       {lista.length > 0 && (
-        <button onClick={esvaziar} className="text-sm px-4 py-2 rounded-full border border-line text-red-600 mb-4">🗑 Esvaziar lixeira</button>
+        <button onClick={esvaziar} className="text-sm px-4 py-2 rounded-full border border-line text-muted mb-4">🗑 Esvaziar lixeira (restaura todos)</button>
       )}
       <TabelaUsuarios
         linhas={lista.map((a) => ({ ...porEmail.get(normalizarEmail(a.email)), email: a.email, desde: a.em }))}
         vazio="A lixeira está vazia."
-        acao={(l) => <button onClick={() => restaurar(l.email)} className="text-xs text-clay hover:underline">restaurar</button>}
+        colaboradores={colaboradores}
+        acao={(l) => (
+          <span className="flex gap-2 justify-end">
+            <button onClick={() => restaurar(l.email)} className="text-xs text-clay hover:underline">restaurar</button>
+            <button onClick={() => excluirCadastro(l.email)} className="text-xs text-red-600 hover:underline">excluir cadastro</button>
+          </span>
+        )}
       />
     </div>
   )
@@ -284,7 +350,7 @@ function AbaSuporte({ config, onGravar, salvando }) {
 
 /* ---------------- tabela comum ---------------- */
 
-function TabelaUsuarios({ linhas, vazio, acao, colunaExtra, corDaLinha }) {
+function TabelaUsuarios({ linhas, vazio, acao, colunaExtra, corDaLinha, colaboradores }) {
   if (!linhas.length) return <p className="text-sm text-muted">{vazio}</p>
   return (
     <div className="overflow-x-auto border border-line rounded-xl bg-white">
@@ -304,7 +370,12 @@ function TabelaUsuarios({ linhas, vazio, acao, colunaExtra, corDaLinha }) {
           {linhas.map((l) => (
             <tr key={l.email} className="border-b border-line last:border-0" style={{ color: corDaLinha?.(l) }}>
               <td className="p-3 whitespace-nowrap">{l.desde ? new Date(l.desde).toLocaleDateString('pt-BR') : '—'}</td>
-              <td className="p-3">{l.email}</td>
+              <td className="p-3">
+                {colaboradores?.has(normalizarEmail(l.email)) && (
+                  <span title="Colaborador: acessa as suas propostas" className="mr-1">⭐</span>
+                )}
+                {l.email}
+              </td>
               <td className="p-3">{l.nome || '—'}</td>
               <td className="p-3 whitespace-nowrap">{l.whatsapp || '—'}</td>
               <td className="p-3">{l.propostas ?? '—'}</td>
@@ -316,6 +387,7 @@ function TabelaUsuarios({ linhas, vazio, acao, colunaExtra, corDaLinha }) {
       </table>
       <p className="text-[11px] text-muted p-3">
         Profissional, WhatsApp e propostas aparecem conforme cada pessoa preenche as Configurações e cria propostas.
+        {colaboradores?.size > 0 && ' ⭐ marca os colaboradores, que trabalham nas suas propostas.'}
       </p>
     </div>
   )

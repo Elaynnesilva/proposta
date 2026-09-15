@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
-import { subscribeAuth, definirContaDeTrabalho, listProposals, getSettings, saveSettings } from './lib/db'
-import { lerConfigAcesso, registrarAcesso, resolverPapel, salvarConfigAcesso, normalizarEmail } from './lib/acesso'
+import { subscribeAuth, definirContaDeTrabalho, listProposals, getSettings, apagarTodosOsDadosDaConta } from './lib/db'
+import { lerConfigAcesso, registrarAcesso, resolverPapel, salvarConfigAcesso, concluirZeragem } from './lib/acesso'
 import Layout from './components/Layout'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
@@ -43,6 +43,26 @@ export default function App() {
       if (cancelado) return
       const papel = resolverPapel({ config, user, acesso: registro })
       definirContaDeTrabalho(papel.contaDeDados)
+
+      /**
+       * Cadastro marcado como "excluir cadastro" pela administradora: o espaço é zerado aqui,
+       * pelo aplicativo da própria pessoa — ela é a única com permissão sobre os próprios
+       * dados. Depois disso o teste recomeça do zero. Quem continua bloqueado não passa por
+       * aqui: nada é apagado enquanto o e-mail estiver na lixeira.
+       */
+      if (registro?.zerar && papel.papel !== 'excluido' && papel.papel !== 'colaborador') {
+        try {
+          await apagarTodosOsDadosDaConta()
+          await concluirZeragem()
+        } catch (err) { console.error(err) }
+        if (cancelado) return
+        const novoRegistro = await registrarAcesso()
+        const novoPapel = resolverPapel({ config, user, acesso: novoRegistro })
+        definirContaDeTrabalho(novoPapel.contaDeDados)
+        setAcesso({ ...novoPapel, config })
+        return
+      }
+
       setAcesso({ ...papel, config })
 
       // a dona grava o próprio uid nas configurações: é por ele que o colaborador sabe

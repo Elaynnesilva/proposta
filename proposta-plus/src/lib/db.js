@@ -536,3 +536,31 @@ export async function saveTemplateContent(content) {
   // devolve a versão com as fotos de verdade, pra tela continuar mostrando na hora
   return content
 }
+
+
+/**
+ * Apaga TUDO do espaço de quem está logado: propostas (com as fotos), agenda, biblioteca de
+ * imagens da conta e o conteúdo/configurações.
+ *
+ * Quem executa é o aplicativo da própria pessoa, não o da administradora — ela nunca recebe
+ * permissão de leitura sobre os dados de ninguém, e é isso que sustenta a promessa de que
+ * cada conta é um espaço isolado. Por isso a limpeza acontece no login seguinte de quem foi
+ * marcado, e não no momento em que a administradora clica.
+ */
+export async function apagarTodosOsDadosDaConta() {
+  const uid = requireUid()
+
+  const propostas = await getDocs(collection(db, 'users', uid, 'proposals'))
+  for (const prop of propostas.docs) {
+    await apagarFotosDaProposta(uid, prop.id)
+    await deleteDoc(prop.ref).catch(() => {})
+  }
+
+  const biblioteca = await getDocs(collection(db, 'users', uid, 'media'))
+  await Promise.all(biblioteca.docs.map((d) => deleteDoc(d.ref).catch(() => {})))
+
+  const eventos = await getDocs(collection(db, 'users', uid, 'events'))
+  await Promise.all(eventos.docs.map((d) => deleteDoc(d.ref).catch(() => {})))
+
+  await setDoc(doc(db, 'users', uid), { content: null, settings: null }, { merge: true }).catch(() => {})
+}

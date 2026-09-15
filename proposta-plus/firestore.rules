@@ -56,7 +56,10 @@ service cloud.firestore {
     // (é o que alimenta a tabela) e pode apagar ao esvaziar a lixeira.
     match /acessos/{uid} {
       allow read: if logado() && (request.auth.uid == uid || ehDona());
-      allow create, update: if logado() && request.auth.uid == uid;
+      allow create: if logado() && request.auth.uid == uid;
+      // a dona também atualiza este documento para marcar um cadastro a ser zerado no próximo
+      // login da pessoa — ela nunca recebe acesso aos DADOS de ninguém, só a este registro
+      allow update: if logado() && (request.auth.uid == uid || ehDona());
       allow delete: if ehDona();
     }
 

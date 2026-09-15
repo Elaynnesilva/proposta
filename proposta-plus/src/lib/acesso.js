@@ -35,7 +35,13 @@ export const SUPORTE_PADRAO = {
   colaboradores: [],
 }
 
-export const ACESSO_PADRAO = { autorizados: [], excluidos: [], donoUid: '', suporte: SUPORTE_PADRAO }
+/**
+ * `teste` guarda os e-mails que estão em teste MESMO SEM TEREM ENTRADO ainda — por exemplo,
+ * um e-mail tirado dos autorizados. Quem já fez login aparece em teste sozinho (pelo próprio
+ * cadastro em acessos/{uid}); esta lista cobre justamente quem ainda não tem cadastro nenhum
+ * e, sem ela, simplesmente sumia da tela ao sair dos autorizados.
+ */
+export const ACESSO_PADRAO = { autorizados: [], teste: [], excluidos: [], donoUid: '', suporte: SUPORTE_PADRAO }
 
 const refConfig = () => doc(db, 'config', 'acesso')
 
@@ -51,6 +57,7 @@ export async function lerConfigAcesso() {
       ...ACESSO_PADRAO,
       ...data,
       autorizados: data.autorizados || [],
+      teste: data.teste || [],
       excluidos: data.excluidos || [],
       suporte: { ...SUPORTE_PADRAO, ...(data.suporte || {}) },
     }
@@ -100,6 +107,26 @@ export async function listarAcessos() {
   } catch {
     return []
   }
+}
+
+/**
+ * Marca o cadastro de alguém para ser ZERADO no próximo login dela.
+ *
+ * A limpeza não acontece agora porque quem apaga os dados é o aplicativo da própria pessoa —
+ * a administradora nunca recebe permissão de leitura sobre o espaço de ninguém, e é isso que
+ * sustenta a promessa de que cada conta é isolada. A marca fica no cadastro dela; ao entrar,
+ * o app dela vê a marca, apaga o próprio conteúdo, começa um teste novo e limpa a marca.
+ */
+export async function marcarParaZerar(uid) {
+  if (!uid) return
+  await setDoc(doc(db, 'acessos', uid), { zerar: true, desde: null }, { merge: true }).catch(() => {})
+}
+
+/** Limpa a marca e recomeça a contagem do teste — chamado pelo app de quem foi zerado. */
+export async function concluirZeragem() {
+  const user = auth.currentUser
+  if (!user) return
+  await setDoc(doc(db, 'acessos', user.uid), { zerar: false, desde: new Date().toISOString() }, { merge: true }).catch(() => {})
 }
 
 export async function apagarAcesso(uid) {

@@ -380,9 +380,6 @@ function LimpezaDeFotos({ onFim }) {
           {resultado > 0 ? `${resultado} foto(s) sem uso foram apagadas.` : 'Nenhuma foto sobrando — está tudo em uso.'}
         </p>
       )}
-      <p className="text-[11px] text-muted mt-1">
-        Não alcança fotos de propostas apagadas antes desta versão; essas só saem pelo Console do Firebase.
-      </p>
     </div>
   )
 }
