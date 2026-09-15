@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { subscribeAuth, definirContaDeTrabalho, listProposals, getSettings, apagarTodosOsDadosDaConta } from './lib/db'
-import { lerConfigAcesso, registrarAcesso, resolverPapel, salvarConfigAcesso, concluirZeragem } from './lib/acesso'
+import { lerConfigAcesso, registrarAcesso, resolverPapel, salvarConfigAcesso, concluirZeragem, sincronizarVencidos, listarAcessos } from './lib/acesso'
 import Layout from './components/Layout'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
@@ -67,8 +67,11 @@ export default function App() {
 
       // a dona grava o próprio uid nas configurações: é por ele que o colaborador sabe
       // qual espaço abrir
-      if (papel.papel === 'dono' && config.donoUid !== user.uid) {
-        salvarConfigAcesso({ ...config, donoUid: user.uid }).catch(() => {})
+      if (papel.papel === 'dono') {
+        if (config.donoUid !== user.uid) salvarConfigAcesso({ ...config, donoUid: user.uid }).catch(() => {})
+        // a cada entrada da administradora, a lista de testes vencidos que as regras consultam
+        // é recalculada — é o único momento em que existe alguém com permissão para gravá-la
+        listarAcessos().then((todos) => sincronizarVencidos(config, todos)).catch(() => {})
       }
 
       // completa o registro com o que alimenta a tabela (nome, WhatsApp e nº de propostas)

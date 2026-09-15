@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import {
   lerConfigAcesso, salvarConfigAcesso, listarAcessos,
-  separarEmails, normalizarEmail, SUPORTE_PADRAO, marcarParaZerar,
+  separarEmails, normalizarEmail, SUPORTE_PADRAO, marcarParaZerar, sincronizarVencidos,
 } from '../lib/acesso'
 
 const ABAS = [
@@ -21,8 +21,10 @@ export default function Usuarios() {
 
   async function recarregar() {
     const [c, a] = await Promise.all([lerConfigAcesso(), listarAcessos()])
-    setConfig(c)
     setAcessos(a)
+    // aproveita a visita para atualizar a lista de testes vencidos que as regras consultam
+    const atualizado = await sincronizarVencidos(c, a).catch(() => c)
+    setConfig(atualizado)
   }
 
   async function gravar(patch) {

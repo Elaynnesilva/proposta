@@ -67,9 +67,59 @@ export async function lerConfigAcesso() {
   }
 }
 
+/**
+ * Grava as listas e, junto, as versões "só e-mails" delas.
+ *
+ * As regras do Firestore precisam perguntar "este e-mail está na lista?", e elas não sabem
+ * percorrer uma lista de objetos como {email, desde} para extrair um campo. Por isso o app
+ * mantém, no mesmo documento, listas paralelas com os e-mails puros — é nelas que as regras
+ * olham. Quem escreve continua sendo só a administradora, então elas são tão confiáveis
+ * quanto as originais.
+ */
 export async function salvarConfigAcesso(config) {
-  await setDoc(refConfig(), config, { merge: true })
-  return config
+  const completo = {
+    ...config,
+    autorizadosEmails: (config.autorizados || []).map((a) => normalizarEmail(a.email)),
+    excluidosEmails: (config.excluidos || []).map((a) => normalizarEmail(a.email)),
+    colaboradoresEmails: (config.suporte?.colaboradores || []).map(normalizarEmail),
+  }
+  await setDoc(refConfig(), completo, { merge: true })
+  return completo
+}
+
+/**
+ * Recalcula quem já passou do período de teste e grava a lista para as regras do Firestore.
+ *
+ * A conta é feita aqui, no app da administradora, e não dentro das regras. O motivo é de
+ * confiança: a data de início do teste é gravada pelo aplicativo de quem entra, ou seja, pela
+ * própria pessoa — se as regras dependessem dela, bastaria alterá-la para renovar o teste
+ * sozinho. Vindo da administradora, a lista não pode ser forjada.
+ *
+ * Em troca, ela só é atualizada quando a administradora abre o sistema. Alguém pode, no pior
+ * caso, seguir usando alguns dias além do prazo até a próxima vez que você entrar.
+ */
+export async function sincronizarVencidos(config, acessos) {
+  const dias = Number(config.suporte?.diasTeste) || 30
+  const principal = normalizarEmail(config.suporte?.emailPrincipal || EMAIL_PRINCIPAL_PADRAO)
+  const autorizados = new Set((config.autorizados || []).map((a) => normalizarEmail(a.email)))
+  const colaboradores = new Set((config.suporte?.colaboradores || []).map(normalizarEmail))
+
+  const vencidos = []
+  const considerar = (email, desde) => {
+    const e = normalizarEmail(email)
+    if (!e || e === principal || autorizados.has(e) || colaboradores.has(e)) return
+    if (!desde) return
+    const fim = new Date(new Date(desde).getTime() + dias * 24 * 60 * 60 * 1000)
+    if (fim.getTime() < Date.now()) vencidos.push(e)
+  }
+  ;(acessos || []).forEach((a) => considerar(a.email, a.desde))
+  ;(config.teste || []).forEach((t) => considerar(t.email, t.desde))
+
+  const lista = [...new Set(vencidos)]
+  const atual = config.vencidosEmails || []
+  const igual = lista.length === atual.length && lista.every((e) => atual.includes(e))
+  if (igual) return config
+  return salvarConfigAcesso({ ...config, vencidosEmails: lista })
 }
 
 /* ---------------- registro de quem entra ---------------- */

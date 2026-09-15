@@ -1,15 +1,20 @@
 rules_version = '2';
 
 /*
- * REGRAS DO FIRESTORE — Proposta+
+ * REGRAS DO FIRESTORE — Proposta+  (ETAPA 2: bloqueio ativo)
  *
- * Este arquivo NÃO sobe junto com o deploy da Vercel. Ele precisa ser publicado à mão no
- * Console do Firebase: Firestore Database > Regras > colar > Publicar.
+ * Este arquivo NÃO sobe com o deploy da Vercel. Publique à mão no Console do Firebase:
+ * Firestore Database > Regras > colar > Publicar.
  *
- * ETAPA 1 (esta versão): as listas de usuários já existem e todo mundo é registrado ao
- * entrar, mas ninguém é bloqueado ainda. Serve para conferir a tela "Usuários do sistema"
- * com dados reais sem risco de travar o sistema. O bloqueio de excluídos e de testes
- * vencidos entra na ETAPA 2, depois que esta estiver rodando.
+ * O que muda em relação à Etapa 1: quem está na lixeira e quem passou do período de teste
+ * deixam de conseguir GRAVAR. Continuam lendo o que já criaram — é o "apenas visualizar"
+ * combinado. O e-mail da administradora atravessa qualquer bloqueio, de propósito: é a saída
+ * de emergência caso alguma lista fique errada.
+ *
+ * As regras consultam listas de e-mails puros (autorizadosEmails, excluidosEmails,
+ * vencidosEmails, colaboradoresEmails) mantidas pelo aplicativo dentro de config/acesso.
+ * Regra de Firestore não sabe percorrer uma lista de objetos para extrair um campo, e só a
+ * administradora escreve nesse documento — então essas listas são confiáveis.
  */
 
 service cloud.firestore {
@@ -23,42 +28,60 @@ service cloud.firestore {
       return request.auth.token.email.lower();
     }
 
-    // O e-mail da administradora fica escrito AQUI, e não só no banco, de propósito: se o
-    // app decidisse sozinho quem é administrador, bastaria alguém editar o próprio cadastro
-    // para virar um. Trocar de administradora exige alterar e publicar este arquivo.
+    // O e-mail da administradora fica escrito AQUI, e não só no banco, de propósito: se o app
+    // decidisse sozinho quem é administrador, bastaria alguém editar o próprio cadastro para
+    // virar um. Trocar de administradora exige alterar e publicar este arquivo.
     function ehDona() {
       return logado() && emailDoUsuario() == 'elaynnearquiteta@gmail.com';
     }
 
-    function colaboradores() {
-      return get(/databases/$(database)/documents/config/acesso).data.suporte.colaboradores;
+    function config() {
+      return get(/databases/$(database)/documents/config/acesso).data;
     }
 
-    // colaborador trabalha DENTRO do espaço da dona: pode ler e gravar as propostas dela,
-    // mas não mexe nas configurações da conta nem nas listas de usuários
+    function temConfig() {
+      return exists(/databases/$(database)/documents/config/acesso);
+    }
+
+    // sem o documento de configuração (primeiro uso), ninguém é bloqueado — evita que um
+    // banco recém-criado deixe todo mundo de fora
+    function estaBloqueado() {
+      return temConfig()
+        && (emailDoUsuario() in config().get('excluidosEmails', [])
+            || emailDoUsuario() in config().get('vencidosEmails', []));
+    }
+
+    // colaborador trabalha DENTRO do espaço da administradora: lê e grava as propostas dela,
+    // mas não mexe nas listas de usuários
     function ehColaboradorDe(donoUid) {
-      return logado()
-        && exists(/databases/$(database)/documents/config/acesso)
-        && emailDoUsuario() in colaboradores()
-        && get(/databases/$(database)/documents/config/acesso).data.donoUid == donoUid;
+      return logado() && temConfig()
+        && emailDoUsuario() in config().get('colaboradoresEmails', [])
+        && config().get('donoUid', '') == donoUid;
+    }
+
+    function podeLer(userId) {
+      return logado() && (request.auth.uid == userId || ehDona() || ehColaboradorDe(userId));
+    }
+
+    // gravar exige, além de ser o dono do espaço, não estar bloqueado
+    function podeGravar(userId) {
+      return ehDona()
+        || (logado() && (request.auth.uid == userId || ehColaboradorDe(userId)) && !estaBloqueado());
     }
 
     /* ---------------- listas de acesso ---------------- */
 
-    // qualquer pessoa logada LÊ (é assim que o app dela descobre em que situação está),
-    // mas só a dona ESCREVE — senão alguém poderia se colocar na lista de autorizados
     match /config/acesso {
       allow read: if logado();
       allow write: if ehDona();
     }
 
-    // um documento por pessoa, escrito por ela mesma no primeiro login. A dona lê todos
-    // (é o que alimenta a tabela) e pode apagar ao esvaziar a lixeira.
     match /acessos/{uid} {
       allow read: if logado() && (request.auth.uid == uid || ehDona());
       allow create: if logado() && request.auth.uid == uid;
-      // a dona também atualiza este documento para marcar um cadastro a ser zerado no próximo
-      // login da pessoa — ela nunca recebe acesso aos DADOS de ninguém, só a este registro
+      // a administradora também atualiza este documento para marcar um cadastro a ser zerado
+      // no próximo login da pessoa — ela nunca recebe acesso aos DADOS de ninguém, só a este
+      // registro. Quem está bloqueado ainda pode atualizar o próprio (é só o carimbo de entrada).
       allow update: if logado() && (request.auth.uid == uid || ehDona());
       allow delete: if ehDona();
     }
@@ -66,29 +89,29 @@ service cloud.firestore {
     /* ---------------- dados de cada conta ---------------- */
 
     match /users/{userId} {
-      allow read: if logado() && (request.auth.uid == userId || ehColaboradorDe(userId));
-      allow write: if logado() && (request.auth.uid == userId || ehColaboradorDe(userId));
+      allow read: if podeLer(userId);
+      allow write: if podeGravar(userId);
 
-      // biblioteca de imagens da conta (fotos que valem para todas as propostas)
       match /media/{mediaId} {
-        allow read, write: if logado() && (request.auth.uid == userId || ehColaboradorDe(userId));
+        allow read: if podeLer(userId);
+        allow write: if podeGravar(userId);
       }
 
       match /proposals/{proposalId} {
         // o link do cliente abre sem login: só funciona se a proposta estiver marcada como pública
-        allow read: if resource.data.public == true
-          || (logado() && (request.auth.uid == userId || ehColaboradorDe(userId)));
-        allow write: if logado() && (request.auth.uid == userId || ehColaboradorDe(userId));
+        allow read: if resource.data.public == true || podeLer(userId);
+        allow write: if podeGravar(userId);
 
         match /media/{mediaId} {
-          allow read: if logado() && (request.auth.uid == userId || ehColaboradorDe(userId))
+          allow read: if podeLer(userId)
             || get(/databases/$(database)/documents/users/$(userId)/proposals/$(proposalId)).data.public == true;
-          allow write: if logado() && (request.auth.uid == userId || ehColaboradorDe(userId));
+          allow write: if podeGravar(userId);
         }
       }
 
       match /events/{eventId} {
-        allow read, write: if logado() && (request.auth.uid == userId || ehColaboradorDe(userId));
+        allow read: if podeLer(userId);
+        allow write: if podeGravar(userId);
       }
     }
   }
