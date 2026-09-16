@@ -85,15 +85,20 @@ export default function Dashboard({ acesso }) {
     }).length
   }, [proposals])
 
-  const limiteMensal = Number(acesso?.config?.suporte?.limiteMensal) || 6
+  // quem está em teste tem um limite próprio, menor: é o período em que a pessoa ainda não
+  // pagou nada e, se não converter, o que ela criar fica ocupando espaço para sempre
+  const ehTeste = acesso?.papel === 'teste'
+  const limiteMensal = ehTeste
+    ? (Number(acesso?.config?.suporte?.limiteMensalTeste) || 2)
+    : (Number(acesso?.config?.suporte?.limiteMensal) || 6)
   // a administradora não entra no limite: é ela quem demonstra o sistema e acompanha o consumo
   const limiteAtingido = acesso?.papel !== 'dono' && criadasNoMes >= limiteMensal
+  const motivoBloqueio = !limiteAtingido ? '' : (ehTeste
+    ? 'Você excedeu o limite de criação de propostas na versão de teste, garanta agora o seu Pack PreciFiqueBem'
+    : 'Você excedeu o limite mensal de criação de propostas, exclua uma proposta para liberar o botão ou aguarde o seu limite ser reestabelecido no próximo mês')
 
   async function createProposal() {
-    if (limiteAtingido) {
-      alert(`Você já criou ${criadasNoMes} propostas neste mês, que é o limite de ${limiteMensal}.\n\nO limite volta a zerar no dia 1º. Encerrar propostas já entregues libera espaço, mas não muda a contagem do mês.`)
-      return
-    }
+    if (limiteAtingido) { alert(motivoBloqueio); return }
     const saved = await saveProposal({
       name: 'Nova proposta',
       status: 'rascunho',
@@ -147,12 +152,16 @@ export default function Dashboard({ acesso }) {
 
   const filteredProposals = useMemo(() => {
     const q = search.trim().toLowerCase()
-    return proposals.filter((p) => {
+    const lista = proposals.filter((p) => {
       if (filterTipologia !== 'todas' && p.tipologia !== filterTipologia) return false
       if (filterStatus !== 'todas' && p.status !== filterStatus) return false
       if (q && !(p.name || '').toLowerCase().includes(q) && !(p.fields?.nomeCliente || '').toLowerCase().includes(q)) return false
       return true
     })
+    // proposta encerrada ou recusada é assunto fechado: vai para o fim da lista, para as que
+    // ainda estão em andamento ficarem à mão
+    const arquivada = (p) => (p.closed || p.status === 'recusada' ? 1 : 0)
+    return [...lista].sort((a, b) => arquivada(a) - arquivada(b))
   }, [proposals, search, filterTipologia, filterStatus])
 
   return (
@@ -183,10 +192,21 @@ export default function Dashboard({ acesso }) {
         >
           + Nova proposta
         </button>
-        {acesso?.papel !== 'dono' && (
+        {acesso?.papel !== 'dono' && !limiteAtingido && (
           <p className="text-[11px] text-muted mt-1.5">
             {criadasNoMes} de {limiteMensal} propostas criadas neste mês
           </p>
+        )}
+        {limiteAtingido && (
+          <div className="mt-2 p-2.5 rounded-lg max-w-xs text-left" style={{ background: '#FDEEEC' }}>
+            <p className="text-[11px]" style={{ color: '#B42318' }}>{motivoBloqueio}</p>
+            {ehTeste && acesso?.config?.suporte?.botaoLink && (
+              <a
+                href={acesso.config.suporte.botaoLink} target="_blank" rel="noreferrer"
+                className="inline-block text-[11px] font-medium mt-1.5 px-3 py-1.5 rounded-full bg-clay text-white"
+              >{acesso.config.suporte.botaoNome || 'Saiba mais'}</a>
+            )}
+          </div>
         )}
         </div>
       </div>
@@ -280,8 +300,13 @@ export default function Dashboard({ acesso }) {
                     {p.name || 'Sem nome'}
                   </h3>
                 )}
-                <span className="shrink-0 text-[10px] uppercase tracking-wide px-2 py-1 rounded-full" style={{ color: STATUS[p.status]?.color, background: STATUS[p.status]?.bg }}>
-                  {STATUS[p.status]?.label}
+                <span
+                  className="shrink-0 text-[10px] uppercase tracking-wide px-2 py-1 rounded-full"
+                  style={p.closed && p.status === 'aceita'
+                    ? { color: '#5B636B', background: '#EFEDE8' }
+                    : { color: STATUS[p.status]?.color, background: STATUS[p.status]?.bg }}
+                >
+                  {p.closed && p.status === 'aceita' ? 'Projeto Finalizado' : STATUS[p.status]?.label}
                 </span>
               </div>
 
@@ -301,17 +326,14 @@ export default function Dashboard({ acesso }) {
                 <button onClick={() => navigate(`/proposta/${p.id}/editar`)} className="text-xs px-3 py-1.5 rounded-full border border-line hover:bg-sand">
                   {p.closed || p.pendenteEncerramento ? 'Ver dados do projeto' : 'Editar'}
                 </button>
-                {!p.closed && (
+                {/* proposta encerrada ou recusada não se apresenta mais: as fotos foram apagadas
+                    e o que sobraria na tela seriam as imagens padrão, dando a impressão errada
+                    de que a apresentação continua inteira */}
+                {!p.closed && p.status !== 'recusada' && (
                   <button onClick={() => navigate(`/proposta/${p.id}/apresentar`)} className="text-xs px-3 py-1.5 rounded-full bg-ink text-white hover:opacity-90">Apresentar</button>
                 )}
                 <button onClick={() => remove(p.id)} className="text-xs px-3 py-1.5 rounded-full text-red-600 hover:bg-red-50 ml-auto">Excluir</button>
               </div>
-
-              {p.recusaMotivo && (
-                <div className="text-[11px] mb-3 p-2 rounded-lg" style={{ background: '#FDEEEC', color: '#B42318' }}>
-                  Motivo da recusa: {p.recusaMotivo}
-                </div>
-              )}
 
               {/* contagem regressiva: avisa com antecedência que a edição vai travar */}
               {!p.closed && !p.pendenteEncerramento && p.status === 'aceita' && (diasAteEncerrar(p) ?? 99) <= 30 && (
@@ -328,12 +350,6 @@ export default function Dashboard({ acesso }) {
                 <div className="text-[11px] mb-3 p-2 rounded-lg" style={{ background: '#FDEEEC', color: '#B42318' }}>
                   <strong>Pendente de encerramento.</strong> Passaram {DIAS_ATE_ENCERRAR} dias da entrega e a
                   edição está travada. Suas fotos continuam guardadas — baixe o PDF e encerre para liberar espaço.
-                </div>
-              )}
-
-              {p.closed && (
-                <div className="text-[11px] text-muted mb-3 p-2 rounded-lg bg-sand">
-                  Encerrada em {new Date(p.closedAt).toLocaleDateString('pt-BR')} — apresentação e fotos apagadas para liberar espaço.
                 </div>
               )}
 

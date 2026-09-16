@@ -831,6 +831,29 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
     }
   }
 
+  /**
+   * Proposta encerrada ou recusada não abre mais a apresentação, nem digitando o endereço
+   * direto. Esconder só o botão no painel não bastava: as fotos já foram apagadas, então o
+   * que aparecia eram as imagens padrão do modelo — dando a impressão de que a apresentação
+   * continuava inteira. A exportação de PDF é a exceção, porque é ela que gera a cópia final
+   * dentro da janela de encerramento.
+   */
+  if (!exportOnly && !isPublic && proposal && (proposal.closed || proposal.status === 'recusada')) {
+    return (
+      <div className="min-h-screen bg-sand flex items-center justify-center p-6">
+        <div className="bg-white rounded-2xl p-8 max-w-md w-full border border-line text-center">
+          <h1 className="font-display text-2xl text-ink mb-2">Apresentação indisponível</h1>
+          <p className="text-sm text-ink/80 mb-6">
+            {proposal.closed
+              ? 'Esta proposta foi encerrada: a apresentação e as fotos foram apagadas para liberar espaço. Os dados do projeto continuam guardados.'
+              : 'Esta proposta foi marcada como recusada, então a apresentação não fica mais disponível.'}
+          </p>
+          <button onClick={() => navigate('/')} className="text-sm px-5 py-2.5 rounded-full bg-ink text-white">Voltar para as propostas</button>
+        </div>
+      </div>
+    )
+  }
+
   if (!proposal || !settings) {
     if (exportOnly) return null
     return <div className="min-h-screen flex items-center justify-center text-muted">Carregando apresentação…</div>

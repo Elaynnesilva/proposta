@@ -3,6 +3,7 @@ import {
   lerConfigAcesso, salvarConfigAcesso, listarAcessos,
   separarEmails, normalizarEmail, SUPORTE_PADRAO, marcarParaZerar, sincronizarVencidos,
 } from '../lib/acesso'
+import { medirEspacoUsado } from '../lib/db'
 
 const ABAS = [
   { id: 'autorizados', label: 'Autorizados' },
@@ -111,7 +112,12 @@ export default function Usuarios() {
       {aba === 'excluidos' && (
         <AbaExcluidos config={config} porEmail={porEmail} colaboradores={colaboradores} onGravar={gravar} onRecarregar={recarregar} />
       )}
-      {aba === 'suporte' && <AbaSuporte config={config} onGravar={gravar} salvando={salvando} />}
+      {aba === 'suporte' && (
+        <>
+          <PainelDeEspaco />
+          <AbaSuporte config={config} onGravar={gravar} salvando={salvando} />
+        </>
+      )}
     </div>
   )
 }
@@ -318,7 +324,8 @@ function AbaSuporte({ config, onGravar, salvando }) {
       {campo('whatsapp', 'WhatsApp do suporte')}
       {campo('email', 'E-mail do suporte')}
       {campo('diasTeste', 'Tempo de teste (dias)')}
-      {campo('limiteMensal', 'Limite de propostas por mês', { dica: 'Vale para todos, menos para você. Protege o espaço do banco, que é compartilhado.' })}
+      {campo('limiteMensal', 'Limite de propostas por mês', { dica: 'Vale para autorizados e colaboradores. Você não entra no limite.' })}
+      {campo('limiteMensalTeste', 'Limite de propostas por mês — versão de teste', { dica: 'Menor de propósito: quem não converte deixa as propostas ocupando espaço.' })}
       {campo('botaoNome', 'Nome do botão de vendas')}
       {campo('botaoLink', 'Link de vendas')}
 
@@ -344,7 +351,7 @@ function AbaSuporte({ config, onGravar, salvando }) {
 
       <button
         disabled={salvando}
-        onClick={() => onGravar({ suporte: { ...s, diasTeste: Number(s.diasTeste) || 30, limiteMensal: Number(s.limiteMensal) || 6, colaboradores: separarEmails(colaboradores) } })}
+        onClick={() => onGravar({ suporte: { ...s, diasTeste: Number(s.diasTeste) || 30, limiteMensal: Number(s.limiteMensal) || 6, limiteMensalTeste: Number(s.limiteMensalTeste) || 2, colaboradores: separarEmails(colaboradores) } })}
         className="text-sm px-5 py-2.5 rounded-full bg-clay text-white font-medium disabled:opacity-50"
       >{salvando ? 'Salvando…' : 'Salvar'}</button>
     </div>
@@ -392,6 +399,86 @@ function TabelaUsuarios({ linhas, vazio, acao, colunaExtra, corDaLinha, colabora
         Profissional, WhatsApp e propostas aparecem conforme cada pessoa preenche as Configurações e cria propostas.
         {colaboradores?.size > 0 && ' ⭐ marca os colaboradores, que trabalham nas suas propostas.'}
       </p>
+    </div>
+  )
+}
+
+/**
+ * Espaço ocupado pelas fotos. O Firebase não mostra esse número no plano gratuito, e é
+ * justamente o limite que aperta primeiro: 1 GiB para a conta inteira.
+ *
+ * Contar exige ler os documentos das fotos, o que consome cota — então é um botão que a
+ * pessoa aperta quando quer, e não algo que roda sozinho toda vez que a tela abre. Seria
+ * irônico um medidor de consumo virar ele mesmo uma fonte de consumo.
+ */
+function PainelDeEspaco() {
+  const [dados, setDados] = useState(null)
+  const [medindo, setMedindo] = useState(false)
+
+  const LIMITE = 1024 * 1024 * 1024 // 1 GiB do plano gratuito
+
+  async function medir() {
+    setMedindo(true)
+    try {
+      setDados(await medirEspacoUsado())
+    } catch (err) {
+      console.error(err)
+      alert('Não consegui medir o espaço agora. Tente de novo em alguns instantes.')
+    } finally {
+      setMedindo(false)
+    }
+  }
+
+  const mb = (bytes) => `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  const pct = dados ? Math.min((dados.totalBytes / LIMITE) * 100, 100) : 0
+  const cor = pct >= 80 ? '#B42318' : pct >= 50 ? '#B45309' : '#16803C'
+
+  return (
+    <div className="mb-8 p-4 border border-line rounded-xl bg-white max-w-2xl">
+      <h3 className="font-medium text-ink text-sm mb-1">Espaço usado pelas fotos</h3>
+      <p className="text-[11px] text-muted mb-3">
+        O plano gratuito do Firebase dá 1 GB para a conta inteira, e é o limite que aperta primeiro.
+        A medição lê os documentos das fotos, então só roda quando você pedir.
+      </p>
+
+      {!dados ? (
+        <button onClick={medir} disabled={medindo} className="text-sm px-4 py-2 rounded-full bg-ink text-white disabled:opacity-50">
+          {medindo ? 'Medindo…' : '📊 Medir agora'}
+        </button>
+      ) : (
+        <>
+          <div className="flex items-baseline gap-2 mb-1">
+            <span className="font-display text-2xl" style={{ color: cor }}>{mb(dados.totalBytes)}</span>
+            <span className="text-sm text-muted">de 1 GB · {dados.totalFotos} fotos</span>
+          </div>
+          <div className="h-2 rounded-full bg-line overflow-hidden mb-1">
+            <div className="h-full transition-all" style={{ width: `${Math.max(pct, 1)}%`, background: cor }} />
+          </div>
+          <p className="text-[11px] text-muted mb-4">
+            {pct.toFixed(1)}% do limite · estimativa a partir do peso médio das fotos
+          </p>
+
+          <div className="text-sm text-ink/80 mb-1">
+            Biblioteca da conta (fotos que valem para todas as propostas): {dados.biblioteca.quantidade} fotos · {mb(dados.biblioteca.bytes)}
+          </div>
+
+          {dados.porProposta.length > 0 && (
+            <div className="mt-3 border-t border-line pt-3">
+              <div className="text-xs font-medium text-ink/70 mb-2">Por proposta (da mais pesada para a mais leve)</div>
+              {dados.porProposta.map((p) => (
+                <div key={p.id} className="flex justify-between gap-3 text-sm text-ink/80 mb-1">
+                  <span className="truncate">{p.nome}{p.encerrada && ' (encerrada)'}</span>
+                  <span className="shrink-0 text-muted">{p.quantidade} fotos · {mb(p.bytes)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <button onClick={medir} disabled={medindo} className="text-xs text-clay mt-3 disabled:opacity-50">
+            {medindo ? 'Medindo…' : 'medir de novo'}
+          </button>
+        </>
+      )}
     </div>
   )
 }

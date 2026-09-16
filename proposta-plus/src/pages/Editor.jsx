@@ -168,7 +168,9 @@ export default function Editor() {
 
       {proposal.closed && (
         <div className="mb-6 p-4 rounded-xl border border-line bg-white">
-          <div className="font-medium text-ink text-sm mb-1">Proposta encerrada</div>
+          <div className="font-medium text-ink text-sm mb-1">
+            {proposal.status === 'aceita' ? 'Projeto finalizado' : 'Proposta encerrada'}
+          </div>
           <p className="text-sm text-muted">
             Encerrada em {new Date(proposal.closedAt).toLocaleDateString('pt-BR')}. A apresentação e as fotos foram
             apagadas para liberar espaço. Os dados abaixo ficam guardados para consulta e não podem mais ser alterados.

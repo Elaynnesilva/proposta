@@ -564,3 +564,51 @@ export async function apagarTodosOsDadosDaConta() {
 
   await setDoc(doc(db, 'users', uid), { content: null, settings: null }, { merge: true }).catch(() => {})
 }
+
+
+/**
+ * Mede quanto espaço as fotos desta conta estão ocupando.
+ *
+ * O Firebase não mostra esse número no plano gratuito ("Os custos do produto não estão
+ * disponíveis para o plano Spark"), e ele é justamente o limite mais apertado: 1 GiB para a
+ * conta inteira. Como as fotos são texto (base64) guardado dentro de documentos, dá para
+ * medir aqui: conta quantas existem e pesa uma amostra de cada grupo, projetando o resto.
+ *
+ * A amostragem existe por causa da cota: baixar TODAS as fotos só para pesá-las gastaria
+ * exatamente o que estamos tentando economizar. Por isso também é um botão manual, e não
+ * algo que roda sozinho ao abrir a tela.
+ */
+export async function medirEspacoUsado({ amostraPorGrupo = 3 } = {}) {
+  const uid = requireUid()
+
+  async function pesarGrupo(ref) {
+    const snap = await getDocs(ref)
+    if (snap.empty) return { quantidade: 0, bytes: 0 }
+    const amostra = snap.docs.slice(0, amostraPorGrupo)
+    const soma = amostra.reduce((acc, d) => acc + (d.data().dataUrl?.length || 0), 0)
+    const media = soma / amostra.length
+    return { quantidade: snap.size, bytes: Math.round(media * snap.size) }
+  }
+
+  const biblioteca = await pesarGrupo(collection(db, 'users', uid, 'media'))
+
+  const propostas = await getDocs(collection(db, 'users', uid, 'proposals'))
+  const porProposta = []
+  for (const prop of propostas.docs) {
+    const dados = prop.data()
+    const medida = await pesarGrupo(collection(db, 'users', uid, 'proposals', prop.id, 'media'))
+    if (medida.quantidade === 0) continue
+    porProposta.push({
+      id: prop.id,
+      nome: dados.name || 'Sem nome',
+      encerrada: !!dados.closed,
+      ...medida,
+    })
+  }
+  porProposta.sort((a, b) => b.bytes - a.bytes)
+
+  const totalFotos = biblioteca.quantidade + porProposta.reduce((n, p) => n + p.quantidade, 0)
+  const totalBytes = biblioteca.bytes + porProposta.reduce((n, p) => n + p.bytes, 0)
+
+  return { biblioteca, porProposta, totalFotos, totalBytes, propostas: propostas.size }
+}

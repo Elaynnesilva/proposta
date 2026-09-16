@@ -30,6 +30,7 @@ export const SUPORTE_PADRAO = {
   email: 'precifiquebem.contato@gmail.com',
   diasTeste: 30,
   limiteMensal: 6,
+  limiteMensalTeste: 2,
   botaoNome: 'Pack PreciFiqueBem',
   botaoLink: 'https://elaynnemaria.wixsite.com/arqdesign/pack-precifiquebem',
   emailPrincipal: EMAIL_PRINCIPAL_PADRAO,
