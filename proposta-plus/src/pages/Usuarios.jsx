@@ -487,6 +487,12 @@ function PainelDeEspaco() {
           <p className="text-[11px] text-muted mb-1">
             {pct.toFixed(1)}% do limite · estimativa a partir do peso médio das fotos
           </p>
+          {dados.totalFotos > 300 && (
+            <p className="text-[11px] mb-2 p-2 rounded-lg" style={{ background: '#FEF6E7', color: '#8A5A00' }}>
+              Esse número de fotos é alto demais para o uso normal — é quase certo que a maior parte
+              são cópias repetidas da mesma imagem, geradas por um defeito já corrigido. Vale limpar.
+            </p>
+          )}
           <p className="text-[11px] text-muted mb-4">
             Medido em {medidoEm?.toLocaleString('pt-BR')} · o resultado fica guardado por 24 horas
             {dados.falhas > 0 && ` · ${dados.falhas} grupo(s) de fotos não puderam ser lidos e ficaram de fora`}

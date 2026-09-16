@@ -373,6 +373,23 @@ const SHARED_MEDIA_PREFIX = 'sharedmedia://'
  *  proposta, e devolve a referência curta que deve ser guardada no lugar da foto (em
  *  slideOverrides, feedbacks, etc). A referência é sempre resolvida de volta pra foto de
  *  verdade automaticamente ao carregar a proposta (ver hydrateMediaRefs). */
+/**
+ * Fotos já enviadas nesta sessão: conteúdo da foto -> referência criada.
+ *
+ * Sem isso, a MESMA foto virava um documento novo a cada gravação. O motivo: a tela guarda a
+ * foto de verdade (para aparecer na hora, sem recarregar), e toda alteração da proposta — um
+ * texto, uma cor, um desfazer — regrava o documento inteiro, reenviando cada foto que ainda
+ * estivesse em formato de imagem. Uma proposta com 20 fotos editada 100 vezes acabava com
+ * 2.000 documentos de foto guardados, praticamente todos cópias idênticas do mesmo arquivo.
+ *
+ * Com o índice abaixo, a segunda gravação reaproveita a referência da primeira e nada é
+ * duplicado. A chave é o próprio conteúdo da foto, então fotos diferentes continuam sendo
+ * enviadas normalmente.
+ */
+const fotosJaEnviadas = new Map()
+
+const chaveDaFoto = (escopo, dataUrl) => `${escopo}|${dataUrl.length}|${dataUrl.slice(0, 120)}|${dataUrl.slice(-80)}`
+
 export async function saveImageAsMedia(proposalId, dataUrl) {
   const uid = requireUid()
   // ~1MB é o limite por documento do Firestore; a foto (base64) fica bem abaixo disso graças
@@ -380,9 +397,14 @@ export async function saveImageAsMedia(proposalId, dataUrl) {
   if (dataUrl.length > 900000) {
     throw new Error('Imagem grande demais mesmo depois de comprimida — tente uma foto menor.')
   }
+  const chave = chaveDaFoto(`p:${proposalId}`, dataUrl)
+  if (fotosJaEnviadas.has(chave)) return fotosJaEnviadas.get(chave)
+
   const colRef = collection(db, 'users', uid, 'proposals', proposalId, 'media')
   const docRef = await addDoc(colRef, { dataUrl, createdAt: serverTimestamp() })
-  return `${MEDIA_PREFIX}${docRef.id}`
+  const ref = `${MEDIA_PREFIX}${docRef.id}`
+  fotosJaEnviadas.set(chave, ref)
+  return ref
 }
 
 /** Igual à de cima, mas guarda a foto na biblioteca da CONTA (users/{uid}/media) em vez de
@@ -393,9 +415,16 @@ export async function saveSharedImage(dataUrl) {
   if (dataUrl.length > 900000) {
     throw new Error('Imagem grande demais mesmo depois de comprimida — tente uma foto menor.')
   }
+  // mesmo problema, mesma solução: o conteúdo do modelo também é regravado inteiro a cada
+  // edição, e sem este índice cada gravação duplicava toda a biblioteca da conta
+  const chave = chaveDaFoto('conta', dataUrl)
+  if (fotosJaEnviadas.has(chave)) return fotosJaEnviadas.get(chave)
+
   const colRef = collection(db, 'users', uid, 'media')
   const docRef = await addDoc(colRef, { dataUrl, createdAt: serverTimestamp() })
-  return `${SHARED_MEDIA_PREFIX}${docRef.id}`
+  const ref = `${SHARED_MEDIA_PREFIX}${docRef.id}`
+  fotosJaEnviadas.set(chave, ref)
+  return ref
 }
 
 /** Percorre um objeto trocando toda foto em base64 por uma referência curta da biblioteca
