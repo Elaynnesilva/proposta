@@ -3,7 +3,7 @@ import {
   lerConfigAcesso, salvarConfigAcesso, listarAcessos,
   separarEmails, normalizarEmail, SUPORTE_PADRAO, marcarParaZerar, sincronizarVencidos,
 } from '../lib/acesso'
-import { iniciarMedicaoEspaco, lerMedicaoSalva, medicaoEstaRodando } from '../lib/db'
+import { iniciarMedicaoEspaco, lerMedicaoSalva, medicaoEstaRodando, lerProgressoMedicao } from '../lib/db'
 
 const ABAS = [
   { id: 'autorizados', label: 'Autorizados' },
@@ -415,6 +415,7 @@ function PainelDeEspaco() {
   const [dados, setDados] = useState(() => lerMedicaoSalva())
   const [medindo, setMedindo] = useState(() => medicaoEstaRodando())
   const [erro, setErro] = useState('')
+  const [progresso, setProgresso] = useState(() => lerProgressoMedicao())
 
   const LIMITE = 1024 * 1024 * 1024 // 1 GiB do plano gratuito
 
@@ -423,14 +424,17 @@ function PainelDeEspaco() {
   useEffect(() => {
     if (!medicaoEstaRodando()) return
     setMedindo(true)
-    iniciarMedicaoEspaco().then(setDados).catch(() => {}).finally(() => setMedindo(false))
+    setProgresso(lerProgressoMedicao())
+    iniciarMedicaoEspaco(setProgressoDaTela).then(setDados).catch(() => {}).finally(() => setMedindo(false))
   }, [])
+
+  function setProgressoDaTela(feitas, total) { setProgresso({ feitas, total }) }
 
   async function medir() {
     setMedindo(true)
     setErro('')
     try {
-      setDados(await iniciarMedicaoEspaco())
+      setDados(await iniciarMedicaoEspaco(setProgressoDaTela))
     } catch (err) {
       console.error(err)
       // mostra o erro de verdade: "Não consegui medir agora" não dizia nada sobre a causa
@@ -462,7 +466,8 @@ function PainelDeEspaco() {
 
       {medindo && (
         <p className="text-[11px] text-muted mb-3">
-          Medindo… pode sair desta tela, a medição continua e o resultado fica esperando aqui.
+          Medindo{progresso.total ? ` — proposta ${progresso.feitas} de ${progresso.total}` : '…'}.
+          Pode sair desta tela: a medição continua e o resultado fica esperando aqui.
         </p>
       )}
 

@@ -17,7 +17,7 @@ import {
 } from 'firebase/auth'
 import {
   doc, getDoc, setDoc, deleteDoc,
-  collection, getDocs, query, orderBy,
+  collection, getDocs, query, orderBy, limit, getCountFromServer,
   serverTimestamp, addDoc, updateDoc,
 } from 'firebase/firestore'
 import { auth, db, googleProvider, storage } from './firebase'
@@ -571,28 +571,34 @@ export async function apagarTodosOsDadosDaConta() {
  *
  * O Firebase não mostra esse número no plano gratuito ("Os custos do produto não estão
  * disponíveis para o plano Spark"), e ele é justamente o limite mais apertado: 1 GiB para a
- * conta inteira. Como as fotos são texto (base64) guardado dentro de documentos, dá para
- * medir aqui: conta quantas existem e pesa uma amostra de cada grupo, projetando o resto.
+ * conta inteira.
  *
- * A amostragem existe por causa da cota: baixar TODAS as fotos só para pesá-las gastaria
- * exatamente o que estamos tentando economizar. Por isso também é um botão manual, e não
- * algo que roda sozinho ao abrir a tela.
+ * O jeito de contar importa muito aqui. A primeira versão pedia a coleção inteira de fotos e
+ * pesava as três primeiras — só que pedir a coleção já BAIXA todas elas. Como cada foto é
+ * meio megabyte de texto, a medição baixava a biblioteca inteira: travava a tela, levava
+ * minutos e gastava justamente a cota que a gente quer poupar.
+ *
+ * Agora são duas perguntas por grupo:
+ *   - getCountFromServer: quantas fotos existem, contado NO SERVIDOR, sem baixar nenhuma;
+ *   - limit(amostra): baixa só duas ou três fotos, para saber o peso médio.
+ *
+ * O total é a contagem multiplicada por esse peso médio — uma estimativa, mas que custa
+ * alguns poucos KB em vez de dezenas de MB.
  */
-export async function medirEspacoUsado({ amostraPorGrupo = 3 } = {}) {
+export async function medirEspacoUsado({ amostraPorGrupo = 3, aoProgredir } = {}) {
   const uid = requireUid()
-
   let falhas = 0
 
-  // um grupo que não puder ser lido não derruba a medição inteira: ele é contado como falha
-  // e o resto do número continua valendo. Antes, um único erro fazia tudo voltar vazio.
+  // um grupo que não puder ser lido não derruba a medição inteira: é contado como falha e o
+  // resto do número continua valendo
   async function pesarGrupo(ref) {
     try {
-      const snap = await getDocs(ref)
-      if (snap.empty) return { quantidade: 0, bytes: 0 }
-      const amostra = snap.docs.slice(0, amostraPorGrupo)
-      const soma = amostra.reduce((acc, d) => acc + (d.data().dataUrl?.length || 0), 0)
-      const media = soma / amostra.length
-      return { quantidade: snap.size, bytes: Math.round(media * snap.size) }
+      const total = (await getCountFromServer(ref)).data().count
+      if (!total) return { quantidade: 0, bytes: 0 }
+      const amostra = await getDocs(query(ref, limit(amostraPorGrupo)))
+      const soma = amostra.docs.reduce((acc, d) => acc + (d.data().dataUrl?.length || 0), 0)
+      const media = amostra.empty ? 0 : soma / amostra.size
+      return { quantidade: total, bytes: Math.round(media * total) }
     } catch (err) {
       console.error('medição: não consegui ler', ref.path, err)
       falhas++
@@ -604,16 +610,14 @@ export async function medirEspacoUsado({ amostraPorGrupo = 3 } = {}) {
 
   const propostas = await getDocs(query(collection(db, 'users', uid, 'proposals'), orderBy('updatedAt', 'desc')))
   const porProposta = []
+  let feitas = 0
   for (const prop of propostas.docs) {
     const dados = prop.data()
     const medida = await pesarGrupo(collection(db, 'users', uid, 'proposals', prop.id, 'media'))
+    feitas++
+    aoProgredir?.(feitas, propostas.size)
     if (medida.quantidade === 0) continue
-    porProposta.push({
-      id: prop.id,
-      nome: dados.name || 'Sem nome',
-      encerrada: !!dados.closed,
-      ...medida,
-    })
+    porProposta.push({ id: prop.id, nome: dados.name || 'Sem nome', encerrada: !!dados.closed, ...medida })
   }
   porProposta.sort((a, b) => b.bytes - a.bytes)
 
@@ -635,6 +639,11 @@ const CHAVE_MEDICAO = 'propostaplus:medicaoEspaco'
 const VALIDADE_MEDICAO_MS = 24 * 60 * 60 * 1000
 
 let medicaoEmAndamento = null
+let progressoDaMedicao = { feitas: 0, total: 0 }
+
+export function lerProgressoMedicao() {
+  return progressoDaMedicao
+}
 
 export function lerMedicaoSalva() {
   try {
@@ -651,9 +660,12 @@ export function medicaoEstaRodando() {
 }
 
 /** Inicia a medição, ou devolve a que já está rodando (para dois cliques não duplicarem). */
-export function iniciarMedicaoEspaco() {
+export function iniciarMedicaoEspaco(aoProgredir) {
   if (medicaoEmAndamento) return medicaoEmAndamento
-  medicaoEmAndamento = medirEspacoUsado()
+  progressoDaMedicao = { feitas: 0, total: 0 }
+  medicaoEmAndamento = medirEspacoUsado({
+    aoProgredir: (feitas, total) => { progressoDaMedicao = { feitas, total }; aoProgredir?.(feitas, total) },
+  })
     .then((dados) => {
       try { localStorage.setItem(CHAVE_MEDICAO, JSON.stringify(dados)) } catch { /* sem storage */ }
       return dados
