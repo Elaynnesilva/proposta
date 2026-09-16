@@ -237,3 +237,23 @@ export function separarEmails(texto) {
       .filter((e) => e.includes('@')),
   )]
 }
+
+
+/**
+ * Permissão de edição da sessão atual, guardada num lugar só.
+ *
+ * Quem está com o teste vencido pode LER tudo o que criou, mas não gravar. As regras do
+ * Firestore já recusam a gravação — o problema é que, sem isso aqui, a tela continuava
+ * aceitando digitação e cliques, e a pessoa só descobria que nada foi salvo depois. Guardado
+ * num módulo (e não passado de tela em tela) porque a apresentação e o editor são abertos por
+ * rotas próprias, fora do layout que conhece o papel de quem está logado.
+ */
+let permissaoDeEdicao = true
+
+export function definirPermissaoDeEdicao(pode) {
+  permissaoDeEdicao = pode !== false
+}
+
+export function podeEditarAgora() {
+  return permissaoDeEdicao
+}

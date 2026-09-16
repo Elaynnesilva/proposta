@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import EncerrarProposta from '../components/EncerrarProposta'
+import { podeEditarAgora } from '../lib/acesso'
 import { diasAteEncerrar, prazoDeEncerramento, DIAS_ATE_ENCERRAR } from './Dashboard'
 import { getProposalRaw, saveProposal, getSettings, addSavedSwatch, addSavedPalette, removeSavedPalette, listEvents, saveEvent, deleteEvent } from '../lib/db'
 import { parseMoneyBR } from '../lib/fields'
@@ -31,6 +32,7 @@ export default function Editor() {
   const [savedTick, setSavedTick] = useState(false)
 
   const [recusando, setRecusando] = useState(false)
+  const edicaoLiberada = podeEditarAgora()
   // o editor não mostra nenhuma foto (são dados, cores e datas), então carrega a proposta sem
   // baixar as imagens — era isso que fazia "entrar para editar" demorar vários segundos
   useEffect(() => { getProposalRaw(id).then(setProposal) }, [id])
@@ -189,7 +191,22 @@ export default function Editor() {
 
       {/* pendente de encerramento trava a edição igual a uma proposta encerrada, mas sem
           apagar nada — os dados continuam à vista, só não podem mais ser alterados */}
-      <fieldset disabled={!!(proposal.closed || proposal.pendenteEncerramento)} className={proposal.closed || proposal.pendenteEncerramento ? 'opacity-75' : ''}>
+      {/* teste vencido: os campos travam de verdade. As regras do Firestore já recusavam a
+          gravação, mas a tela continuava aceitando digitação — e a pessoa só descobria que
+          nada tinha sido salvo depois de escrever tudo */}
+      {!edicaoLiberada && !proposal.closed && !proposal.pendenteEncerramento && (
+        <div className="mb-6 p-4 rounded-xl" style={{ background: '#FDEEEC' }}>
+          <div className="font-medium text-sm mb-0.5" style={{ color: '#B42318' }}>Período de teste encerrado</div>
+          <p className="text-sm" style={{ color: '#B42318' }}>
+            Você continua vendo tudo o que criou, mas não é mais possível alterar as propostas.
+          </p>
+        </div>
+      )}
+
+      <fieldset
+        disabled={!!(proposal.closed || proposal.pendenteEncerramento) || !edicaoLiberada}
+        className={proposal.closed || proposal.pendenteEncerramento || !edicaoLiberada ? 'opacity-75' : ''}
+      >
         {(tab === 'dados' || proposal.closed) && (
           <>
             <TipologiaPicker proposal={proposal} onChange={persist} />

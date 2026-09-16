@@ -20,6 +20,7 @@ export default function Dashboard({ acesso }) {
   const [renamingId, setRenamingId] = useState(null)
   const [valueModalId, setValueModalId] = useState(null)
   const [encerrarId, setEncerrarId] = useState(null)
+  const [avisoLimite, setAvisoLimite] = useState(false)
   const [settings, setSettings] = useState(null)
   const [search, setSearch] = useState('')
   const [filtersOpen, setFiltersOpen] = useState(false)
@@ -98,7 +99,8 @@ export default function Dashboard({ acesso }) {
     : 'Você excedeu o limite mensal de criação de propostas, exclua uma proposta para liberar o botão ou aguarde o seu limite ser reestabelecido no próximo mês')
 
   async function createProposal() {
-    if (limiteAtingido) { alert(motivoBloqueio); return }
+    // o aviso aparece só aqui, ao tentar criar — fora disso a tela fica limpa
+    if (limiteAtingido) { setAvisoLimite(true); return }
     const saved = await saveProposal({
       name: 'Nova proposta',
       status: 'rascunho',
@@ -166,6 +168,21 @@ export default function Dashboard({ acesso }) {
 
   return (
     <div className="p-6 md:p-10 max-w-6xl mx-auto">
+      {avisoLimite && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-6" onClick={() => setAvisoLimite(false)}>
+          <div className="bg-white rounded-xl p-5 w-full max-w-sm text-center" onClick={(e) => e.stopPropagation()}>
+            <p className="text-sm text-ink mb-4">{motivoBloqueio}</p>
+            {ehTeste && acesso?.config?.suporte?.botaoLink && (
+              <a
+                href={acesso.config.suporte.botaoLink} target="_blank" rel="noreferrer"
+                className="block text-sm font-medium mb-2 px-4 py-2.5 rounded-full bg-clay text-white"
+              >{acesso.config.suporte.botaoNome || 'Saiba mais'}</a>
+            )}
+            <button onClick={() => setAvisoLimite(false)} className="w-full text-sm py-2.5 rounded-lg border border-line text-muted">Fechar</button>
+          </div>
+        </div>
+      )}
+
       {settings && (settings.logoDataUrl || settings.companyName) && (
         <div className="flex items-center gap-3 mb-6">
           {settings.logoDataUrl && <img src={settings.logoDataUrl} alt="logo" className="w-14 h-14 rounded-full object-cover border border-line" />}
@@ -186,9 +203,8 @@ export default function Dashboard({ acesso }) {
         <div className="text-right">
         <button
           onClick={createProposal}
-          disabled={(acesso && acesso.podeEditar === false) || limiteAtingido}
-          title={limiteAtingido ? `Limite de ${limiteMensal} propostas por mês atingido` : undefined}
-          className="bg-clay text-white text-sm font-medium px-5 py-2.5 rounded-full hover:opacity-90 transition disabled:opacity-40"
+          disabled={acesso && acesso.podeEditar === false}
+          className={`text-sm font-medium px-5 py-2.5 rounded-full transition disabled:opacity-40 ${limiteAtingido ? 'bg-clay/40 text-white' : 'bg-clay text-white hover:opacity-90'}`}
         >
           + Nova proposta
         </button>
@@ -196,17 +212,6 @@ export default function Dashboard({ acesso }) {
           <p className="text-[11px] text-muted mt-1.5">
             {criadasNoMes} de {limiteMensal} propostas criadas neste mês
           </p>
-        )}
-        {limiteAtingido && (
-          <div className="mt-2 p-2.5 rounded-lg max-w-xs text-left" style={{ background: '#FDEEEC' }}>
-            <p className="text-[11px]" style={{ color: '#B42318' }}>{motivoBloqueio}</p>
-            {ehTeste && acesso?.config?.suporte?.botaoLink && (
-              <a
-                href={acesso.config.suporte.botaoLink} target="_blank" rel="noreferrer"
-                className="inline-block text-[11px] font-medium mt-1.5 px-3 py-1.5 rounded-full bg-clay text-white"
-              >{acesso.config.suporte.botaoNome || 'Saiba mais'}</a>
-            )}
-          </div>
         )}
         </div>
       </div>

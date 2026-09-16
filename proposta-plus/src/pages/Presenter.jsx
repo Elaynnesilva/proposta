@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { getProposalRaw, getSettings, getTemplateContentRaw, saveProposal, saveTemplateContent, getPublicProposalRaw, getPublicSettings, getPublicTemplateContentRaw, setProposalPublic, saveImageAsMedia, fetchMediaByRef } from '../lib/db'
 import { carregarFotos, coletarRefs, aplicarFotos } from '../lib/media'
+import { podeEditarAgora } from '../lib/acesso'
 import { auth } from '../lib/firebase'
 import { buildSlides } from '../lib/slides'
 import { DEFAULT_IMAGES, DEFAULT_SHARED_TEXT } from '../lib/content'
@@ -120,6 +121,10 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
   const publicUid = exportOnly ? null : params.uid
   const isPublic = !!publicUid
   const navigate = useNavigate()
+  /* teste vencido: some tudo que altera a apresentação. Ver, apresentar e baixar o PDF
+     continuam — é o "apenas visualizar" combinado. Antes os botões ficavam na tela, a edição
+     abria e nada era salvo, o que só se descobria depois de perder o trabalho. */
+  const podeEditar = podeEditarAgora()
   const [proposal, setProposal] = useState(null)
   const [settings, setSettings] = useState(null)
   const [templateContent, setTemplateContent] = useState(null)
@@ -909,16 +914,16 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
               {!isPublic && (
                 <button onClick={() => navigate(`/proposta/${id}/editar`)} className="text-xs bg-white/10 px-3 py-1.5 rounded-full shrink-0">← Sair</button>
               )}
-              {!isPublic && (
+              {!isPublic && podeEditar && (
                 <button onClick={() => setEditing((v) => !v)} className="text-xs px-3 py-1.5 rounded-full shrink-0 transition" style={{ background: editing ? c1 : 'rgba(255,255,255,.1)' }}>✎ {editing ? 'Fechar edição' : 'Editar slide'}</button>
               )}
               {!isPublic && (
                 <button onClick={handleCopyLink} className="text-xs bg-white/10 px-3 py-1.5 rounded-full shrink-0">🔗 {linkCopied ? 'Copiado ✓' : 'Link'}</button>
               )}
-              {!isPublic && (
+              {!isPublic && podeEditar && (
                 <button onClick={novoSlide} className="text-xs bg-white/10 px-3 py-1.5 rounded-full shrink-0">✚ Novo slide</button>
               )}
-              {!isPublic && (
+              {!isPublic && podeEditar && (
                 <button onClick={() => duplicarSlide(slide.id)} className="text-xs bg-white/10 px-3 py-1.5 rounded-full shrink-0">⧉ Duplicar</button>
               )}
               <button disabled={exporting} onClick={handleExportPdf} className="text-xs bg-white/10 px-3 py-1.5 rounded-full shrink-0 disabled:opacity-50">⇩ {exporting ? `Gerando… ${exportProgress}/${visibleSlides.length}` : 'Baixar PDF'}</button>
@@ -992,16 +997,22 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
             <div className="flex items-center gap-1 sm:gap-2 pointer-events-auto overflow-x-auto max-w-[70vw] sm:max-w-none">
               {!isPublic && (
                 <>
-                  <button onClick={(e) => { e.stopPropagation(); setEditing((v) => !v) }} className="text-xs bg-black/30 hover:bg-black/50 backdrop-blur px-2.5 sm:px-3 py-1.5 rounded-full transition shrink-0">✎<span className="hidden sm:inline"> {editing ? 'Fechar edição' : 'Editar slide'}</span></button>
+                  {podeEditar && (
+                    <button onClick={(e) => { e.stopPropagation(); setEditing((v) => !v) }} className="text-xs bg-black/30 hover:bg-black/50 backdrop-blur px-2.5 sm:px-3 py-1.5 rounded-full transition shrink-0">✎<span className="hidden sm:inline"> {editing ? 'Fechar edição' : 'Editar slide'}</span></button>
+                  )}
                   <button onClick={(e) => { e.stopPropagation(); handleCopyLink() }} className="text-xs bg-black/30 hover:bg-black/50 backdrop-blur px-2.5 sm:px-3 py-1.5 rounded-full transition shrink-0">
                     🔗<span className="hidden sm:inline"> {linkCopied ? 'Link copiado ✓' : 'Link para o cliente'}</span>
                   </button>
-                  <button onClick={(e) => { e.stopPropagation(); novoSlide() }} className="text-xs bg-black/30 hover:bg-black/50 backdrop-blur px-2.5 sm:px-3 py-1.5 rounded-full transition shrink-0">
-                    ✚<span className="hidden sm:inline"> Novo slide</span>
-                  </button>
-                  <button onClick={(e) => { e.stopPropagation(); duplicarSlide(slide.id) }} className="text-xs bg-black/30 hover:bg-black/50 backdrop-blur px-2.5 sm:px-3 py-1.5 rounded-full transition shrink-0">
-                    ⧉<span className="hidden sm:inline"> Duplicar</span>
-                  </button>
+                  {podeEditar && (
+                    <>
+                      <button onClick={(e) => { e.stopPropagation(); novoSlide() }} className="text-xs bg-black/30 hover:bg-black/50 backdrop-blur px-2.5 sm:px-3 py-1.5 rounded-full transition shrink-0">
+                        ✚<span className="hidden sm:inline"> Novo slide</span>
+                      </button>
+                      <button onClick={(e) => { e.stopPropagation(); duplicarSlide(slide.id) }} className="text-xs bg-black/30 hover:bg-black/50 backdrop-blur px-2.5 sm:px-3 py-1.5 rounded-full transition shrink-0">
+                        ⧉<span className="hidden sm:inline"> Duplicar</span>
+                      </button>
+                    </>
+                  )}
                 </>
               )}
               <button disabled={exporting} onClick={(e) => { e.stopPropagation(); handleExportPdf() }} className="text-xs bg-black/30 hover:bg-black/50 backdrop-blur px-2.5 sm:px-3 py-1.5 rounded-full transition disabled:opacity-50 shrink-0">

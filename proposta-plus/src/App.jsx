@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { subscribeAuth, definirContaDeTrabalho, listProposals, getSettings, apagarTodosOsDadosDaConta } from './lib/db'
-import { lerConfigAcesso, registrarAcesso, resolverPapel, salvarConfigAcesso, concluirZeragem, sincronizarVencidos, listarAcessos } from './lib/acesso'
+import { lerConfigAcesso, registrarAcesso, resolverPapel, salvarConfigAcesso, concluirZeragem, sincronizarVencidos, listarAcessos, definirPermissaoDeEdicao } from './lib/acesso'
 import Layout from './components/Layout'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
@@ -43,6 +43,7 @@ export default function App() {
       if (cancelado) return
       const papel = resolverPapel({ config, user, acesso: registro })
       definirContaDeTrabalho(papel.contaDeDados)
+      definirPermissaoDeEdicao(papel.podeEditar)
 
       /**
        * Cadastro marcado como "excluir cadastro" pela administradora: o espaço é zerado aqui,
@@ -59,6 +60,7 @@ export default function App() {
         const novoRegistro = await registrarAcesso()
         const novoPapel = resolverPapel({ config, user, acesso: novoRegistro })
         definirContaDeTrabalho(novoPapel.contaDeDados)
+        definirPermissaoDeEdicao(novoPapel.podeEditar)
         setAcesso({ ...novoPapel, config })
         return
       }
