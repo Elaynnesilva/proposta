@@ -3,7 +3,7 @@ import {
   lerConfigAcesso, salvarConfigAcesso, listarAcessos,
   separarEmails, normalizarEmail, SUPORTE_PADRAO, marcarParaZerar, sincronizarVencidos,
 } from '../lib/acesso'
-import { medirEspacoUsado } from '../lib/db'
+import { iniciarMedicaoEspaco, lerMedicaoSalva, medicaoEstaRodando } from '../lib/db'
 
 const ABAS = [
   { id: 'autorizados', label: 'Autorizados' },
@@ -412,22 +412,35 @@ function TabelaUsuarios({ linhas, vazio, acao, colunaExtra, corDaLinha, colabora
  * irônico um medidor de consumo virar ele mesmo uma fonte de consumo.
  */
 function PainelDeEspaco() {
-  const [dados, setDados] = useState(null)
-  const [medindo, setMedindo] = useState(false)
+  const [dados, setDados] = useState(() => lerMedicaoSalva())
+  const [medindo, setMedindo] = useState(() => medicaoEstaRodando())
+  const [erro, setErro] = useState('')
 
   const LIMITE = 1024 * 1024 * 1024 // 1 GiB do plano gratuito
 
+  // se a medição já estava rodando quando esta tela abriu (porque a pessoa saiu e voltou),
+  // a gente se pendura nela em vez de começar outra
+  useEffect(() => {
+    if (!medicaoEstaRodando()) return
+    setMedindo(true)
+    iniciarMedicaoEspaco().then(setDados).catch(() => {}).finally(() => setMedindo(false))
+  }, [])
+
   async function medir() {
     setMedindo(true)
+    setErro('')
     try {
-      setDados(await medirEspacoUsado())
+      setDados(await iniciarMedicaoEspaco())
     } catch (err) {
       console.error(err)
-      alert('Não consegui medir o espaço agora. Tente de novo em alguns instantes.')
+      // mostra o erro de verdade: "Não consegui medir agora" não dizia nada sobre a causa
+      setErro(err?.message || 'erro desconhecido')
     } finally {
       setMedindo(false)
     }
   }
+
+  const medidoEm = dados?.em ? new Date(dados.em) : null
 
   const mb = (bytes) => `${(bytes / (1024 * 1024)).toFixed(1)} MB`
   const pct = dados ? Math.min((dados.totalBytes / LIMITE) * 100, 100) : 0
@@ -440,6 +453,18 @@ function PainelDeEspaco() {
         O plano gratuito do Firebase dá 1 GB para a conta inteira, e é o limite que aperta primeiro.
         A medição lê os documentos das fotos, então só roda quando você pedir.
       </p>
+
+      {erro && (
+        <p className="text-[11px] mb-3 p-2 rounded-lg" style={{ background: '#FDEEEC', color: '#B42318' }}>
+          Não consegui concluir a medição: {erro}
+        </p>
+      )}
+
+      {medindo && (
+        <p className="text-[11px] text-muted mb-3">
+          Medindo… pode sair desta tela, a medição continua e o resultado fica esperando aqui.
+        </p>
+      )}
 
       {!dados ? (
         <button onClick={medir} disabled={medindo} className="text-sm px-4 py-2 rounded-full bg-ink text-white disabled:opacity-50">
@@ -454,8 +479,12 @@ function PainelDeEspaco() {
           <div className="h-2 rounded-full bg-line overflow-hidden mb-1">
             <div className="h-full transition-all" style={{ width: `${Math.max(pct, 1)}%`, background: cor }} />
           </div>
-          <p className="text-[11px] text-muted mb-4">
+          <p className="text-[11px] text-muted mb-1">
             {pct.toFixed(1)}% do limite · estimativa a partir do peso médio das fotos
+          </p>
+          <p className="text-[11px] text-muted mb-4">
+            Medido em {medidoEm?.toLocaleString('pt-BR')} · o resultado fica guardado por 24 horas
+            {dados.falhas > 0 && ` · ${dados.falhas} grupo(s) de fotos não puderam ser lidos e ficaram de fora`}
           </p>
 
           <div className="text-sm text-ink/80 mb-1">

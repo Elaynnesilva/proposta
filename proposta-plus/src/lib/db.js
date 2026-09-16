@@ -581,18 +581,28 @@ export async function apagarTodosOsDadosDaConta() {
 export async function medirEspacoUsado({ amostraPorGrupo = 3 } = {}) {
   const uid = requireUid()
 
+  let falhas = 0
+
+  // um grupo que não puder ser lido não derruba a medição inteira: ele é contado como falha
+  // e o resto do número continua valendo. Antes, um único erro fazia tudo voltar vazio.
   async function pesarGrupo(ref) {
-    const snap = await getDocs(ref)
-    if (snap.empty) return { quantidade: 0, bytes: 0 }
-    const amostra = snap.docs.slice(0, amostraPorGrupo)
-    const soma = amostra.reduce((acc, d) => acc + (d.data().dataUrl?.length || 0), 0)
-    const media = soma / amostra.length
-    return { quantidade: snap.size, bytes: Math.round(media * snap.size) }
+    try {
+      const snap = await getDocs(ref)
+      if (snap.empty) return { quantidade: 0, bytes: 0 }
+      const amostra = snap.docs.slice(0, amostraPorGrupo)
+      const soma = amostra.reduce((acc, d) => acc + (d.data().dataUrl?.length || 0), 0)
+      const media = soma / amostra.length
+      return { quantidade: snap.size, bytes: Math.round(media * snap.size) }
+    } catch (err) {
+      console.error('medição: não consegui ler', ref.path, err)
+      falhas++
+      return { quantidade: 0, bytes: 0 }
+    }
   }
 
   const biblioteca = await pesarGrupo(collection(db, 'users', uid, 'media'))
 
-  const propostas = await getDocs(collection(db, 'users', uid, 'proposals'))
+  const propostas = await getDocs(query(collection(db, 'users', uid, 'proposals'), orderBy('updatedAt', 'desc')))
   const porProposta = []
   for (const prop of propostas.docs) {
     const dados = prop.data()
@@ -610,5 +620,44 @@ export async function medirEspacoUsado({ amostraPorGrupo = 3 } = {}) {
   const totalFotos = biblioteca.quantidade + porProposta.reduce((n, p) => n + p.quantidade, 0)
   const totalBytes = biblioteca.bytes + porProposta.reduce((n, p) => n + p.bytes, 0)
 
-  return { biblioteca, porProposta, totalFotos, totalBytes, propostas: propostas.size }
+  return { biblioteca, porProposta, totalFotos, totalBytes, propostas: propostas.size, falhas, em: new Date().toISOString() }
+}
+
+/**
+ * Medição do espaço rodando em segundo plano.
+ *
+ * A medição percorre todas as propostas e demora. Guardar o andamento aqui, num módulo, e não
+ * dentro da tela, permite sair de "Suporte" e voltar depois: a medição continua e o resultado
+ * está esperando. O último resultado também fica salvo no navegador por 24 horas, para não
+ * precisar medir de novo (e gastar cota) só para reconferir um número que não mudou.
+ */
+const CHAVE_MEDICAO = 'propostaplus:medicaoEspaco'
+const VALIDADE_MEDICAO_MS = 24 * 60 * 60 * 1000
+
+let medicaoEmAndamento = null
+
+export function lerMedicaoSalva() {
+  try {
+    const bruto = localStorage.getItem(CHAVE_MEDICAO)
+    if (!bruto) return null
+    const dados = JSON.parse(bruto)
+    if (!dados?.em || Date.now() - new Date(dados.em).getTime() > VALIDADE_MEDICAO_MS) return null
+    return dados
+  } catch { return null }
+}
+
+export function medicaoEstaRodando() {
+  return !!medicaoEmAndamento
+}
+
+/** Inicia a medição, ou devolve a que já está rodando (para dois cliques não duplicarem). */
+export function iniciarMedicaoEspaco() {
+  if (medicaoEmAndamento) return medicaoEmAndamento
+  medicaoEmAndamento = medirEspacoUsado()
+    .then((dados) => {
+      try { localStorage.setItem(CHAVE_MEDICAO, JSON.stringify(dados)) } catch { /* sem storage */ }
+      return dados
+    })
+    .finally(() => { medicaoEmAndamento = null })
+  return medicaoEmAndamento
 }

@@ -208,8 +208,8 @@ export default function Dashboard({ acesso }) {
         >
           + Nova proposta
         </button>
-        {acesso?.papel !== 'dono' && !limiteAtingido && (
-          <p className="text-[11px] text-muted mt-1.5">
+        {acesso?.papel !== 'dono' && (
+          <p className="text-[11px] mt-1.5" style={limiteAtingido ? { color: '#B42318' } : { color: '#7C8288' }}>
             {criadasNoMes} de {limiteMensal} propostas criadas neste mês
           </p>
         )}

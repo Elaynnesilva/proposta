@@ -69,6 +69,14 @@ service cloud.firestore {
         || (logado() && (request.auth.uid == userId || ehColaboradorDe(userId)) && !estaBloqueado());
     }
 
+    // APAGAR é sempre permitido a quem é dono do espaço, mesmo bloqueado.
+    // Bloquear a exclusão junto com a criação era contraproducente: quem está com o teste
+    // vencido ficava sem conseguir liberar espaço, e o próprio aviso do sistema manda excluir
+    // uma proposta para destravar o botão. Apagar nunca faz o banco crescer.
+    function podeApagar(userId) {
+      return logado() && (request.auth.uid == userId || ehDona() || ehColaboradorDe(userId));
+    }
+
     /* ---------------- listas de acesso ---------------- */
 
     match /config/acesso {
@@ -95,17 +103,20 @@ service cloud.firestore {
       match /media/{mediaId} {
         allow read: if podeLer(userId);
         allow write: if podeGravar(userId);
+        allow delete: if podeApagar(userId);
       }
 
       match /proposals/{proposalId} {
         // o link do cliente abre sem login: só funciona se a proposta estiver marcada como pública
         allow read: if resource.data.public == true || podeLer(userId);
         allow write: if podeGravar(userId);
+        allow delete: if podeApagar(userId);
 
         match /media/{mediaId} {
           allow read: if podeLer(userId)
             || get(/databases/$(database)/documents/users/$(userId)/proposals/$(proposalId)).data.public == true;
           allow write: if podeGravar(userId);
+          allow delete: if podeApagar(userId);
         }
       }
 
