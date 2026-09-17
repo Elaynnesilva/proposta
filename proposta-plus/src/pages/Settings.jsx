@@ -96,6 +96,19 @@ export default function Settings() {
           <Field label="Cidade(s) de atuação" value={settings.city} onChange={(v) => persistSettings({ city: v })} />
           <Field label="Instagram" value={settings.instagram} onChange={(v) => persistSettings({ instagram: v })} />
           <Field label="WhatsApp" value={settings.whatsapp} onChange={(v) => persistSettings({ whatsapp: v })} />
+
+          <div>
+            <label className="text-xs font-medium text-ink/70 block mb-1">Fale sobre você</label>
+            <textarea
+              value={settings.bio || ''} rows={6}
+              onChange={(e) => persistSettings({ bio: e.target.value })}
+              placeholder="Sua formação, onde atua, o que guia o seu trabalho…"
+              className="w-full text-sm p-2.5 rounded-lg border border-line outline-none focus:border-clay"
+            />
+            <p className="text-[11px] text-muted mt-1">
+              É o texto do slide "sobre mim" da apresentação. Editar por lá também atualiza aqui.
+            </p>
+          </div>
         </div>
       )}
 

@@ -50,10 +50,14 @@ export function buildSlides({ fields, content, images, settings, custom = [], vi
     id: 'about',
     type: 'profile',
     image: settings.logoDataUrl ? null : images.intro,
+    // nome, texto e registro vêm de Configurações: são dados da pessoa, não do modelo de
+    // apresentação. O modelo só entra como reserva, para quem editou direto no slide antes
+    // desses campos existirem.
     title: settings.professionalName || content.aboutTitle,
-    // usa sempre o texto completo do modelo (que já inclui a missão) — antes, uma bio curta em
-    // Configurações podia sobrescrever e "engolir" o parágrafo da missão sem a pessoa perceber
-    items: [content.aboutBody, settings.registration || content.aboutRegistration].filter(Boolean),
+    items: [
+      settings.bio || content.aboutBody,
+      settings.registration || content.aboutRegistration,
+    ].filter(Boolean),
   })
 
   list.push({ id: 'div-1', type: 'divider', title: 'Do que se trata esta proposta' })

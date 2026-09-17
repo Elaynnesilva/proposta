@@ -52,10 +52,12 @@ export const DEFAULT_SHARED_TEXT = {
     'Jornada do cliente durante o projeto',
     'Investimento no seu sonho',
   ],
-  aboutTitle: 'Elaynne Oliveira',
-  aboutBody:
-    'Designer de Interiores há 8 anos e Arquiteta e Urbanista há 3 anos.\n\nAtuo com projetos principalmente nas cidades de Timon-MA e Teresina-PI.\n\nMinha missão é transformar sonhos em realidade, criando espaços que proporcionem bem-estar, funcionalidade e beleza. Cada projeto é pensado de forma personalizada e prática, para que você compreenda facilmente e consiga executar sem complicações.',
-  aboutRegistration: 'N° de registro CAU: A279269-9',
+  // o slide "sobre mim" nasce VAZIO de propósito: ele é preenchido com o nome, o registro e o
+  // texto que cada profissional coloca em Configurações. Antes havia um nome e uma biografia
+  // escritos aqui, e toda conta nova abria a apresentação com os dados de outra pessoa.
+  aboutTitle: '',
+  aboutBody: '',
+  aboutRegistration: '',
   reasonsTitle: 'Por que um projeto faz toda a diferença',
   reasons: [
     {
@@ -114,9 +116,9 @@ export const DEFAULT_SHARED_TEXT = {
     'Só poderão ser feitas mudanças no projeto durante o período de criação do estudo preliminar e do projeto gráfico. A partir do início do projeto executivo, novas solicitações de mudanças serão cobradas como excedente, horas a mais de trabalho.',
   feedbacksTitle: "Feedback's de clientes",
   feedbacks: [
-    { name: '@oliveira.waldo', photoUrl: 'https://picsum.photos/seed/fb1/200/200', text: 'Optamos pela Elaynne desde a apresentação da proposta, já conseguiu nos surpreender com a organização, riqueza de detalhes e clareza. Projeto de bastante conteúdo. Parabéns!' },
-    { name: '@isabelefrazaonutri', photoUrl: 'https://picsum.photos/seed/fb2/200/200', text: 'Amamos! Obrigada por cuidar com tanto carinho do nosso sonho!' },
-    { name: '@leticia.kethely', photoUrl: 'https://picsum.photos/seed/fb3/200/200', text: 'Eu amei muito, está todo mundo aqui elogiando teu trabalho, lindaaaa.' },
+    // exemplos genéricos: os nomes e depoimentos reais são de clientes de uma pessoa só e não
+    // podem aparecer na apresentação de outra
+    { name: '@cliente', photoUrl: '', text: 'Escreva aqui um depoimento de cliente — ou troque por um print da conversa.' },
   ],
   calcTitle: 'Como o valor é calculado',
   calcConsiderations: [

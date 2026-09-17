@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { getProposalRaw, getSettings, getTemplateContentRaw, saveProposal, saveTemplateContent, getPublicProposalRaw, getPublicSettings, getPublicTemplateContentRaw, setProposalPublic, saveImageAsMedia, fetchMediaByRef } from '../lib/db'
+import { getProposalRaw, getSettings, getTemplateContentRaw, saveProposal, saveTemplateContent, getPublicProposalRaw, getPublicSettings, getPublicTemplateContentRaw, setProposalPublic, saveImageAsMedia, fetchMediaByRef, saveSettings } from '../lib/db'
 import { carregarFotos, coletarRefs, aplicarFotos } from '../lib/media'
 import { podeEditarAgora } from '../lib/acesso'
 import { auth } from '../lib/firebase'
@@ -487,7 +487,27 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
    * proposta lê ao montar os slides — é por isso que uma foto ou um texto colocado aqui
    * aparece sozinho nas PRÓXIMAS propostas, sem precisar refazer nada.
    */
+  /**
+   * O slide "sobre mim" é montado com os dados da pessoa (nome, texto e registro), que moram
+   * em Configurações — e não no modelo de apresentação. Editar pelo slide grava lá também,
+   * senão a edição valeria só na apresentação e os dois lugares ficariam divergindo.
+   */
+  async function espelharSobreMimNasConfiguracoes(patch) {
+    const novos = {}
+    if (typeof patch.title === 'string') novos.professionalName = patch.title
+    if (Array.isArray(patch.items)) {
+      const [texto, registro] = patch.items
+      if (typeof texto === 'string') novos.bio = texto
+      if (typeof registro === 'string') novos.registration = registro
+    }
+    if (!Object.keys(novos).length) return
+    const atualizado = { ...settings, ...novos }
+    setSettings(atualizado)
+    await saveSettings(atualizado).catch((err) => console.error(err))
+  }
+
   async function saveSlideByScope(slideId, patch, scope, slideType) {
+    if (slideId === 'about') await espelharSobreMimNasConfiguracoes(patch)
     if (!scope || scope === 'proposal') {
       saveOverridePerProposal(slideId, patch)
       return
@@ -1247,6 +1267,9 @@ function slideFallbackLabel(s) {
   if (s.type === 'divider') return s.title
   if (s.type === 'closing') return 'Encerramento'
   if (s.type === 'video') return 'Vídeo'
+  // enquanto o nome do profissional não for preenchido em Configurações, o slide "sobre mim"
+  // fica sem título — e sem isso apareceria só "profile" na lista lateral
+  if (s.type === 'profile') return 'Sobre mim'
   return s.type
 }
 
