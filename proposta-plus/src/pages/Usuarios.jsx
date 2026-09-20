@@ -8,6 +8,7 @@ import { iniciarMedicaoEspaco, lerMedicaoSalva, medicaoEstaRodando, lerProgresso
 const ABAS = [
   { id: 'autorizados', label: 'Autorizados' },
   { id: 'teste', label: 'Teste' },
+  { id: 'ranking', label: 'Ranking' },
   { id: 'excluidos', label: 'Excluídos' },
   { id: 'suporte', label: 'Suporte' },
 ]
@@ -108,6 +109,14 @@ export default function Usuarios() {
       )}
       {aba === 'teste' && (
         <AbaTeste emTeste={emTeste} config={config} colaboradores={colaboradores} onGravar={gravar} />
+      )}
+      {aba === 'ranking' && (
+        <AbaRanking
+          acessos={acessos}
+          config={config}
+          colaboradores={colaboradores}
+          emailsExcluidos={emailsExcluidos}
+        />
       )}
       {aba === 'excluidos' && (
         <AbaExcluidos config={config} porEmail={porEmail} colaboradores={colaboradores} onGravar={gravar} onRecarregar={recarregar} />
@@ -226,6 +235,120 @@ function AbaTeste({ emTeste, config, colaboradores, onGravar }) {
           </span>
         )}
       />
+    </div>
+  )
+}
+
+/* ---------------- Ranking ---------------- */
+
+const MEDALHAS = ['🥇', '🥈', '🥉']
+const CORES_PODIO = ['#C79A2E', '#9AA0A8', '#B0703A'] // ouro, prata, bronze — tons compatíveis com a paleta da marca
+
+/**
+ * Ranking por TOTAL de propostas já criadas por cada pessoa. Esse número vem do mesmo lugar
+ * que a coluna "Propostas" das outras abas: é gravado em acessos/{uid} a cada login dela
+ * (ver registrarAcesso em lib/acesso.js). Não é "propostas este mês" — é o total até o último
+ * login, por isso vale olhar junto com a coluna de último acesso: quem não entra há tempos
+ * pode estar com o número desatualizado.
+ */
+function AbaRanking({ acessos, config, colaboradores, emailsExcluidos }) {
+  const principal = normalizarEmail(config?.suporte?.emailPrincipal)
+
+  const ranking = useMemo(() => {
+    return acessos
+      .filter((a) => {
+        const e = normalizarEmail(a.email)
+        if (!e || e === principal) return false
+        if (colaboradores.has(e)) return false
+        if (emailsExcluidos.has(e)) return false
+        return true
+      })
+      .map((a) => ({ ...a, propostas: a.propostas || 0 }))
+      .sort((a, b) => b.propostas - a.propostas)
+  }, [acessos, principal, colaboradores, emailsExcluidos])
+
+  const comPropostas = ranking.filter((l) => l.propostas > 0)
+  const top3 = comPropostas.slice(0, 3)
+  const quartoQuinto = comPropostas.slice(3, 5)
+  // pódio visual: 2º à esquerda, 1º no meio (mais alto), 3º à direita — só reordena com o pódio completo
+  const ordemPodio = top3.length === 3 ? [top3[1], top3[0], top3[2]] : top3
+
+  if (!comPropostas.length) {
+    return <p className="text-sm text-muted">Ainda não há propostas suficientes para montar um ranking.</p>
+  }
+
+  return (
+    <div>
+      <div className="text-center mb-8">
+        <h2 className="font-display text-2xl text-ink mb-1">🏆 Ranking de propostas</h2>
+        <p className="text-sm text-muted">Os profissionais que mais criaram propostas no Proposta+</p>
+      </div>
+
+      <div className="flex items-end justify-center gap-3 md:gap-6 mb-6">
+        {ordemPodio.map((l) => {
+          const posicao = top3.indexOf(l) // 0, 1, 2 → 1º, 2º, 3º
+          const altura = posicao === 0 ? 'pt-2 pb-8' : posicao === 1 ? 'pt-6 pb-5' : 'pt-8 pb-4'
+          const cor = CORES_PODIO[posicao]
+          return (
+            <div
+              key={l.email}
+              className="flex-1 max-w-[220px] rounded-2xl text-center text-white shadow-sm"
+              style={{ background: `linear-gradient(180deg, ${cor}, ${cor}CC)` }}
+            >
+              <div className={`px-3 ${altura}`}>
+                <div className="text-3xl mb-1">{MEDALHAS[posicao]}</div>
+                <div className="font-display text-lg leading-tight mb-1 truncate" title={l.nome || l.email}>
+                  {l.nome || l.email}
+                </div>
+                <div className="text-3xl font-display font-medium">{l.propostas}</div>
+                <div className="text-[11px] opacity-90">proposta{l.propostas === 1 ? '' : 's'}</div>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
+      {quartoQuinto.length > 0 && (
+        <div className="flex justify-center gap-3 mb-10 flex-wrap">
+          {quartoQuinto.map((l, i) => (
+            <div key={l.email} className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-line bg-white">
+              <span className="text-xs font-medium text-muted w-6">{i + 4}º</span>
+              <span className="text-sm text-ink truncate max-w-[140px]" title={l.nome || l.email}>{l.nome || l.email}</span>
+              <span className="text-sm font-medium text-clay ml-2">{l.propostas}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <h3 className="font-display text-lg text-ink mb-3">Lista completa</h3>
+      <div className="overflow-x-auto border border-line rounded-xl bg-white">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-xs text-muted border-b border-line">
+              <th className="p-3 font-medium">#</th>
+              <th className="p-3 font-medium">Profissional</th>
+              <th className="p-3 font-medium">Propostas</th>
+              <th className="p-3 font-medium">WhatsApp</th>
+              <th className="p-3 font-medium">E-mail</th>
+            </tr>
+          </thead>
+          <tbody>
+            {ranking.map((l, i) => (
+              <tr key={l.email} className="border-b border-line last:border-0">
+                <td className="p-3 text-muted">{i + 1}º</td>
+                <td className="p-3">{l.nome || '—'}</td>
+                <td className="p-3 font-medium text-ink">{l.propostas}</td>
+                <td className="p-3 whitespace-nowrap">{l.whatsapp || '—'}</td>
+                <td className="p-3">{l.email}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-[11px] text-muted mt-3">
+        Contagem total de propostas já criadas por cada pessoa, atualizada a cada login dela — quem não
+        entra há um tempo aparece com o número de quando entrou pela última vez.
+      </p>
     </div>
   )
 }
@@ -360,8 +483,32 @@ function AbaSuporte({ config, onGravar, salvando }) {
 
 /* ---------------- tabela comum ---------------- */
 
+/** Acima disso sem entrar, a linha vira vermelha e sobe para o topo da lista — é quem merece um contato. */
+const DIAS_INATIVIDADE = 30
+
+/**
+ * `ultimoAcesso` vem do Firestore como Timestamp (tem `.toDate()`) quando a pessoa já entrou
+ * pelo menos uma vez depois dessa mudança. Quem nunca gravou esse campo (cadastros antigos,
+ * ou alguém que só foi colocado em teste sem nunca ter entrado) simplesmente não tem o campo —
+ * tratado aqui como "mais urgente que qualquer atraso", porque também merece contato.
+ */
+function diasSemAcesso(ultimoAcesso) {
+  const data = ultimoAcesso?.toDate ? ultimoAcesso.toDate() : null
+  if (!data) return Infinity
+  return Math.floor((Date.now() - data.getTime()) / (24 * 60 * 60 * 1000))
+}
+
+function formatarUltimoAcesso(ultimoAcesso) {
+  const dias = diasSemAcesso(ultimoAcesso)
+  if (dias === Infinity) return '—'
+  const relativo = dias <= 0 ? 'hoje' : dias === 1 ? 'ontem' : `há ${dias} dias`
+  return `${ultimoAcesso.toDate().toLocaleDateString('pt-BR')} (${relativo})`
+}
+
 function TabelaUsuarios({ linhas, vazio, acao, colunaExtra, corDaLinha, colaboradores }) {
   if (!linhas.length) return <p className="text-sm text-muted">{vazio}</p>
+  // quem está há mais tempo sem acessar sobe para o topo — é quem mais precisa de um contato
+  const ordenadas = [...linhas].sort((a, b) => diasSemAcesso(b.ultimoAcesso) - diasSemAcesso(a.ultimoAcesso))
   return (
     <div className="overflow-x-auto border border-line rounded-xl bg-white">
       <table className="w-full text-sm">
@@ -372,32 +519,39 @@ function TabelaUsuarios({ linhas, vazio, acao, colunaExtra, corDaLinha, colabora
             <th className="p-3 font-medium">Profissional</th>
             <th className="p-3 font-medium">WhatsApp</th>
             <th className="p-3 font-medium">Propostas</th>
+            <th className="p-3 font-medium">Último acesso</th>
             {colunaExtra && <th className="p-3 font-medium">{colunaExtra.titulo}</th>}
             <th className="p-3" />
           </tr>
         </thead>
         <tbody>
-          {linhas.map((l) => (
-            <tr key={l.email} className="border-b border-line last:border-0" style={{ color: corDaLinha?.(l) }}>
-              <td className="p-3 whitespace-nowrap">{l.desde ? new Date(l.desde).toLocaleDateString('pt-BR') : '—'}</td>
-              <td className="p-3">
-                {colaboradores?.has(normalizarEmail(l.email)) && (
-                  <span title="Colaborador: acessa as suas propostas" className="mr-1">⭐</span>
-                )}
-                {l.email}
-              </td>
-              <td className="p-3">{l.nome || '—'}</td>
-              <td className="p-3 whitespace-nowrap">{l.whatsapp || '—'}</td>
-              <td className="p-3">{l.propostas ?? '—'}</td>
-              {colunaExtra && <td className="p-3 whitespace-nowrap">{colunaExtra.valor(l)}</td>}
-              <td className="p-3 text-right whitespace-nowrap">{acao?.(l)}</td>
-            </tr>
-          ))}
+          {ordenadas.map((l) => {
+            const inativo = diasSemAcesso(l.ultimoAcesso) > DIAS_INATIVIDADE
+            const cor = corDaLinha?.(l) || (inativo ? '#B42318' : undefined)
+            return (
+              <tr key={l.email} className="border-b border-line last:border-0" style={{ color: cor }}>
+                <td className="p-3 whitespace-nowrap">{l.desde ? new Date(l.desde).toLocaleDateString('pt-BR') : '—'}</td>
+                <td className="p-3">
+                  {colaboradores?.has(normalizarEmail(l.email)) && (
+                    <span title="Colaborador: acessa as suas propostas" className="mr-1">⭐</span>
+                  )}
+                  {l.email}
+                </td>
+                <td className="p-3">{l.nome || '—'}</td>
+                <td className="p-3 whitespace-nowrap">{l.whatsapp || '—'}</td>
+                <td className="p-3">{l.propostas ?? '—'}</td>
+                <td className="p-3 whitespace-nowrap">{formatarUltimoAcesso(l.ultimoAcesso)}</td>
+                {colunaExtra && <td className="p-3 whitespace-nowrap">{colunaExtra.valor(l)}</td>}
+                <td className="p-3 text-right whitespace-nowrap">{acao?.(l)}</td>
+              </tr>
+            )
+          })}
         </tbody>
       </table>
       <p className="text-[11px] text-muted p-3">
         Profissional, WhatsApp e propostas aparecem conforme cada pessoa preenche as Configurações e cria propostas.
         {colaboradores?.size > 0 && ' ⭐ marca os colaboradores, que trabalham nas suas propostas.'}
+        {' '}Em vermelho: mais de {DIAS_INATIVIDADE} dias sem acessar (ou nunca acessou) — sobem para o topo.
       </p>
     </div>
   )

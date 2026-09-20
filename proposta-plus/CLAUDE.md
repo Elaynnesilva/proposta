@@ -12,6 +12,21 @@ apresentação de slides, gera PDF e um link público para o cliente.
 - `npm install` / `npm run dev` / `npm run build`
 - Sempre rodar `npm run build` antes de entregar qualquer alteração
 
+## Como as mudanças chegam ao ar
+
+A Vercel está conectada ao repositório no GitHub e publica sozinha sempre que o código lá muda —
+não existe um botão de publicar separado. Ela extrai o zip entregue por fase e arrasta os arquivos
+para o **"Upload files" do GitHub** (não usa Git nem terminal localmente); a Vercel detecta o commit
+novo e publica em 1-2 minutos. `firestore.rules` fica de fora desse caminho: precisa ser colado à
+mão no Console do Firebase (Firestore → Rules → Publish) — por isso toda alteração nesse arquivo
+exige aviso em destaque.
+
+**Reverter um deploy que quebrou algo:** painel da Vercel → aba Deployments → menu (`...`) do deploy
+anterior que funcionava → "Promote to Production". Volta o site ao ar na hora, sem precisar de novo
+build. Não desfaz dados já gravados ou apagados no Firestore nesse meio-tempo, e não cobre uma
+regressão causada por `firestore.rules` (que tem seu próprio histórico de versões no Console do
+Firebase).
+
 ## Como falar com a pessoa
 
 Ela é arquiteta, não programadora. Explicar em português, sem jargão, dizendo **por que**
