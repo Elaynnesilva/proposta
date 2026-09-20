@@ -92,8 +92,8 @@ export default function Settings() {
             <label className="text-sm font-medium text-ink block mb-2">Logo / ícone do sistema</label>
             <div className="flex items-center gap-4">
               {settings.logoDataUrl
-                ? <img src={settings.logoDataUrl} alt="logo" className="h-16 object-contain bg-sand rounded-lg p-2" />
-                : <div className="h-16 w-16 rounded-lg bg-sand flex items-center justify-center text-xs text-muted">sem logo</div>}
+                ? <img src={settings.logoDataUrl} alt="logo" className="h-16 w-16 object-cover rounded-full border border-line" />
+                : <div className="h-16 w-16 rounded-full bg-sand flex items-center justify-center text-xs text-muted">sem logo</div>}
               <div className="flex flex-col items-start gap-1.5">
                 <label className="text-sm cursor-pointer text-clay font-medium">
                   Enviar imagem
