@@ -1,0 +1,85 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  background: #F6F3EE;
+  color: #28313C;
+}
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: #d8d2c6; border-radius: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* animação de revelar texto por clique, usada nas apresentações */
+.reveal-item {
+  opacity: 0;
+  transform: translateY(14px);
+  transition: opacity 0.5s ease, transform 0.5s ease;
+}
+.reveal-item.revealed {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* animações automáticas (sem precisar clicar) — tocam uma vez quando o slide abre */
+@keyframes autoFadeUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes autoFromLeft {
+  from { opacity: 0; transform: translateX(-22px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.auto-fade-item {
+  opacity: 0;
+  animation: autoFadeUp 0.6s ease forwards;
+}
+.auto-left-item {
+  opacity: 0;
+  animation: autoFromLeft 0.55s ease forwards;
+}
+
+/* usado só na área invisível de captura do PDF: força o estado final de todas as
+   animações/transições de texto, para o html2canvas nunca "fotografar" um texto
+   no meio do caminho (opacidade baixa, deslocado) — sem isso, textos podiam sair
+   quase invisíveis ou faltando no PDF baixado */
+.pdf-export-mode .reveal-item,
+.pdf-export-mode .auto-left-item,
+.pdf-export-mode .auto-fade-item {
+  opacity: 1 !important;
+  transform: none !important;
+  animation: none !important;
+  transition: none !important;
+}
+
+@media print {
+  .no-print { display: none !important; }
+}
+
+/*
+ * Tamanho dos textos do slide, escolhido em "Editar slide".
+ *
+ * As duas variáveis chegam na raiz do slide (ver escalaDeFonte no Presenter) e aqui os
+ * tamanhos do Tailwind usados no desenho são multiplicados por elas. Fazer assim evita ter
+ * que carregar a escolha até cada título, descrição e tópico espalhado por ~20 tipos de
+ * slide: a regra pega todos de uma vez, e um slide sem escolha fica com a escala 1 (igual
+ * ao que sempre foi).
+ */
+.esc-fonte { --esc-titulo: 1; --esc-texto: 1; }
+
+.esc-fonte .text-2xl { font-size: calc(1.5rem   * var(--esc-titulo)); line-height: 1.25; }
+.esc-fonte .text-3xl { font-size: calc(1.875rem * var(--esc-titulo)); line-height: 1.2; }
+.esc-fonte .text-4xl { font-size: calc(2.25rem  * var(--esc-titulo)); line-height: 1.15; }
+.esc-fonte .text-5xl { font-size: calc(3rem     * var(--esc-titulo)); line-height: 1.1; }
+
+.esc-fonte .text-\[11px\] { font-size: calc(11px    * var(--esc-texto)); }
+.esc-fonte .text-xs      { font-size: calc(0.75rem * var(--esc-texto)); }
+.esc-fonte .text-sm      { font-size: calc(0.875rem * var(--esc-texto)); }
+.esc-fonte .text-base    { font-size: calc(1rem    * var(--esc-texto)); }
+.esc-fonte .text-lg      { font-size: calc(1.125rem * var(--esc-texto)); }
+.esc-fonte .text-xl      { font-size: calc(1.25rem * var(--esc-texto)); }
