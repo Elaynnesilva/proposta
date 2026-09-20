@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { getSettings, saveSettings, getTemplateContent, saveTemplateContent, listProposals, saveProposal, getProposal, limparFotosOrfas } from '../lib/db'
 import { DEFAULT_SHARED_TEXT, DEFAULT_IMAGES, TIPOLOGIAS } from '../lib/content'
+import RecorteLogo from '../components/RecorteLogo'
 
 const TABS = [
   { id: 'empresa', label: 'Empresa' },
@@ -12,8 +13,13 @@ export default function Settings() {
   const [settings, setSettings] = useState(null)
   const [content, setContent] = useState(null)
   const [savedTick, setSavedTick] = useState(false)
+  const [arquivoLogo, setArquivoLogo] = useState(null) // arquivo escolhido, aguardando o recorte
+  const faviconPadraoRef = useRef(null) // ícone da aba do navegador antes de qualquer logo enviada
 
   useEffect(() => {
+    // guarda o favicon original só na primeira vez, pra poder devolver ao remover a logo
+    const fav = document.getElementById('favicon')
+    if (fav && faviconPadraoRef.current === null) faviconPadraoRef.current = fav.href
     getSettings().then(setSettings)
     getTemplateContent().then((c) => setContent({
       shared: { ...DEFAULT_SHARED_TEXT, ...(c?.shared || {}) },
@@ -44,14 +50,19 @@ export default function Settings() {
     flashSaved()
   }
 
-  function handleLogo(file) {
-    const reader = new FileReader()
-    reader.onload = () => {
-      persistSettings({ logoDataUrl: reader.result })
-      const fav = document.getElementById('favicon')
-      if (fav) fav.href = reader.result
-    }
-    reader.readAsDataURL(file)
+  /** Chamado depois que a pessoa ajusta o recorte circular — já chega pronta em base64 */
+  function confirmarLogo(dataUrl) {
+    persistSettings({ logoDataUrl: dataUrl })
+    const fav = document.getElementById('favicon')
+    if (fav) fav.href = dataUrl
+    setArquivoLogo(null)
+  }
+
+  function removerLogo() {
+    if (!confirm('Remover a logo atual? A apresentação e o painel voltam a aparecer sem ela.')) return
+    persistSettings({ logoDataUrl: '' })
+    const fav = document.getElementById('favicon')
+    if (fav && faviconPadraoRef.current) fav.href = faviconPadraoRef.current
   }
 
   if (!settings || !content) return <div className="p-10 text-muted">Carregando…</div>
@@ -83,10 +94,23 @@ export default function Settings() {
               {settings.logoDataUrl
                 ? <img src={settings.logoDataUrl} alt="logo" className="h-16 object-contain bg-sand rounded-lg p-2" />
                 : <div className="h-16 w-16 rounded-lg bg-sand flex items-center justify-center text-xs text-muted">sem logo</div>}
-              <label className="text-sm cursor-pointer text-clay font-medium">
-                Enviar imagem
-                <input type="file" accept="image/*" hidden onChange={(e) => e.target.files[0] && handleLogo(e.target.files[0])} />
-              </label>
+              <div className="flex flex-col items-start gap-1.5">
+                <label className="text-sm cursor-pointer text-clay font-medium">
+                  Enviar imagem
+                  <input
+                    type="file" accept="image/*" hidden
+                    onChange={(e) => {
+                      if (e.target.files[0]) setArquivoLogo(e.target.files[0])
+                      e.target.value = '' // permite escolher o mesmo arquivo de novo, se ela cancelar o recorte
+                    }}
+                  />
+                </label>
+                {settings.logoDataUrl && (
+                  <button onClick={removerLogo} className="text-sm text-red-600 hover:underline flex items-center gap-1">
+                    🗑 Remover
+                  </button>
+                )}
+              </div>
             </div>
           </div>
 
@@ -113,6 +137,10 @@ export default function Settings() {
       )}
 
       {tab === 'imagens' && <ImagensDaPropostaTab />}
+
+      {arquivoLogo && (
+        <RecorteLogo file={arquivoLogo} onCancelar={() => setArquivoLogo(null)} onConfirmar={confirmarLogo} />
+      )}
     </div>
   )
 }
