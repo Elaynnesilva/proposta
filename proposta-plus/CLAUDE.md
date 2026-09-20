@@ -33,7 +33,10 @@ Ela é arquiteta, não programadora. Explicar em português, sem jargão, dizend
 o problema acontecia — não só o que foi mudado. Comentários no código em português,
 explicando a razão da decisão: o código é lido por ela.
 
-Entregar o projeto inteiro em zip, numerado por fase (fase45, fase46…).
+Entregar o projeto inteiro em zip, numerado por fase (fase45, fase46…). O zip sempre traz uma
+única pasta **"proposta-plus"** por dentro, com tudo dentro dela — assim, ao extrair, ela sabe
+exatamente qual pasta abrir e selecionar (Ctrl+A) para arrastar pro "Upload files" do GitHub,
+sem risco de arrastar a pasta errada e criar uma pasta duplicada dentro do repositório.
 
 ## Layout
 
