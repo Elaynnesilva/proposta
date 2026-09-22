@@ -19,7 +19,7 @@ const SECTION_META = {
  * preenchida), a jornada do cliente, e por fim os 3 pacotes na ordem
  * Completo → Básico → Essencial, cada um com suas formas de pagamento.
  */
-export function buildSlides({ fields, content, images, settings, custom = [], videoUrl = '', videoEmbedUrl = '', visibility = {} }) {
+export function buildSlides({ fields, content, images, settings, custom = [], videoUrl = '', videoEmbedUrl = '', visibility = {}, hiddenSlides = [] }) {
   const f = (code) => fields[code] || ''
   const list = []
   const vis = {
@@ -211,7 +211,12 @@ export function buildSlides({ fields, content, images, settings, custom = [], vi
       benefits: listItems(f(`beneficios${cap(pkg.id)}`)),
     })
 
-    packageSummaries.push({ id: pkg.id, label: pkg.label, value: money(value), schedule, paymentCards, benefits: listItems(f(`beneficios${cap(pkg.id)}`)) })
+    // se a própria página do pacote está oculta (a pessoa não vai mostrar esse pacote pro
+    // cliente), ele também não entra no resumo — senão ficava sozinho lá, contradizendo a
+    // página que ela acabou de esconder
+    if (!hiddenSlides.includes(`package-${pkg.id}`)) {
+      packageSummaries.push({ id: pkg.id, label: pkg.label, value: money(value), schedule, paymentCards, benefits: listItems(f(`beneficios${cap(pkg.id)}`)) })
+    }
   })
 
   if (packageSummaries.length > 1) {

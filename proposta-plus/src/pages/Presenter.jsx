@@ -316,6 +316,7 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
       videoUrl: resolvedVideoUrl,
       videoEmbedUrl: resolvedEmbedUrl,
       visibility: proposal.visibility || {},
+      hiddenSlides: proposal.hiddenSlides || [],
     })
   }, [proposal, settings, templateContent, customSlides])
 
@@ -1509,6 +1510,10 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
   const [imagePosition, setImagePosition] = useState(slide.imagePosition || 'left')
   const isClientRequest = slide.type === 'clientRequest'
   const [objetivoProjeto, setObjetivoProjeto] = useState(slide.objetivoProjeto || '')
+  const isPackagePricing = slide.type === 'packagePricing'
+  // mesmo campo "Benefícios do pacote" que alimenta o card deste pacote no Resumo dos
+  // pacotes — editar aqui ou lá atualiza o mesmo lugar (ver isPackagesSummary mais abaixo)
+  const [packageBenefitsText, setPackageBenefitsText] = useState((slide.benefits || []).join('\n'))
   const isPackagesSummary = slide.type === 'packagesSummary'
   const [hidePayments, setHidePayments] = useState(!!slide.hidePayments)
   const [hideDescriptions, setHideDescriptions] = useState(!!slide.hideDescriptions)
@@ -1571,6 +1576,7 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
     setTextScale(Number(slide.textScale) || 100)
     setCoverImage({ url: slide.image || '', posX: slide.imagePosX, posY: slide.imagePosY })
     setObjetivoProjeto(slide.objetivoProjeto || '')
+    setPackageBenefitsText((slide.benefits || []).join('\n'))
     setHidePayments(!!slide.hidePayments)
     setHideDescriptions(!!slide.hideDescriptions)
     setPackageExtras((slide.packages || []).reduce((acc, pkg) => {
@@ -1619,6 +1625,9 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
     if (slide.type === 'divider') { patch.subtitle = subtitle }
     if (slide.type === 'journeyFlow') { patch.subtitle = subtitle }
     if (isClientRequest) { onSaveFields?.({ objetivoProjeto }) }
+    // mesmo campo "Benefícios do pacote" usado no card deste pacote no Resumo dos pacotes —
+    // editar num lugar atualiza o outro, porque os dois leem do mesmo campo da planilha
+    if (isPackagePricing) { onSaveFields?.({ [`beneficios${slide.packageId.charAt(0).toUpperCase()}${slide.packageId.slice(1)}`]: packageBenefitsText }) }
     // a página de "Acompanhamento de obra" busca a descrição direto de "Dados do projeto"
     // (campo Descrição do acompanhamento de obra) — editar aqui atualiza esse campo, então
     // não fica um texto "preso" só nesta proposta, desalinhado do resto dos dados
@@ -1781,6 +1790,20 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
           {isCover && <p className="text-[11px] text-muted mt-1">Na capa, a cor do texto vale também sobre a foto de fundo. Sem cor escolhida, o texto volta a ser branco.</p>}
           <div className="mb-4" />
         </>
+      )}
+
+      {isPackagePricing && (
+        <div className="mb-4">
+          <label className="text-xs font-medium text-ink/70 block mb-1">Benefícios do pacote (um tópico por linha)</label>
+          <textarea
+            value={packageBenefitsText}
+            onChange={(e) => setPackageBenefitsText(e.target.value)}
+            placeholder={'Estudo e criação do projeto\nImagens realistas 3D\n...'}
+            rows={6}
+            className="w-full text-sm p-2.5 rounded-lg border border-line outline-none focus:border-clay mb-1"
+          />
+          <p className="text-[11px] text-muted mb-4">Isso atualiza o mesmo card deste pacote no Resumo dos pacotes.</p>
+        </div>
       )}
 
       {slide.type === 'packagePricing' && (
