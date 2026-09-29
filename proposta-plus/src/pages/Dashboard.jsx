@@ -4,7 +4,7 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recha
 import { listProposals, saveProposal, deleteProposal, getSettings, closeProposal } from '../lib/db'
 import EncerrarProposta from '../components/EncerrarProposta'
 import AvisoTeste from '../components/AvisoTeste'
-import { defaultFieldsObject } from '../lib/fields'
+import { defaultFieldsObject, money } from '../lib/fields'
 import { DEFAULT_PALETTE } from '../lib/templates'
 
 const STATUS = {
@@ -317,6 +317,18 @@ export default function Dashboard({ acesso }) {
 
               <div className="text-xs text-muted mb-1">{p.fields?.nomeCliente || 'Cliente não definido'}</div>
               <div className="text-xs text-muted mb-1 capitalize">{p.tipologia}</div>
+              {/* valor do Pacote Completo (o campo da planilha), para ver quanto está em jogo sem
+                  abrir a proposta. Só nas em andamento e nas recusadas: a aceita já mostra o valor
+                  que de fato entrou no caixa, e mostrar os dois confundiria. Na recusada fica
+                  vermelho, na mesma cor da etiqueta "Recusada" — é o valor que não entrou. */}
+              {p.status !== 'aceita' && (
+                <div
+                  className={`text-xs mb-1 ${p.status === 'recusada' ? '' : 'text-muted'}`}
+                  style={p.status === 'recusada' ? { color: STATUS.recusada.color } : undefined}
+                >
+                  Valor total: {money(p.fields?.pacoteCompletoValor) || 'R$ 0,00'}
+                </div>
+              )}
               <div className="text-[11px] text-muted/80 mb-4">{formatProposalDate(p)}</div>
 
               {p.status === 'aceita' && p.acceptedValue != null && (

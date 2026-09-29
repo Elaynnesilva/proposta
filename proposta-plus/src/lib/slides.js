@@ -103,6 +103,13 @@ export function buildSlides({ fields, content, images, settings, custom = [], vi
     items: ['Imagens e vídeos realistas', 'Vistas internas e externas', 'Imagens de todos os ângulos'],
   })
 
+  // o vídeo vem logo depois da Modelagem 3D: é ali que se fala de "imagens e vídeos realistas",
+  // então o cliente vê o exemplo no mesmo momento. Antes ele ficava quase no fim, depois dos
+  // pacotes, e precisava ser arrastado à mão em toda proposta nova.
+  // Quem arrastar o vídeo para outro lugar numa proposta continua podendo: a ordem salva na
+  // proposta (slideOrder, no Presenter) vale mais do que esta ordem de fábrica.
+  list.push({ id: 'video', type: 'video', title: 'Vídeo do projeto', videoUrl, embedUrl: videoEmbedUrl })
+
   if (hasValue(f('acompanhamentoObraMeses')) || hasValue(f('acompanhamentoObraDias'))) {
     list.push({
       // imagem FIXA na lateral (e não uma faixa de fotos embaixo, como nas seções de escopo):
@@ -222,8 +229,6 @@ export function buildSlides({ fields, content, images, settings, custom = [], vi
   if (packageSummaries.length > 1) {
     list.push({ id: 'packages-summary', type: 'packagesSummary', title: 'Resumo dos pacotes', packages: packageSummaries })
   }
-
-  list.push({ id: 'video', type: 'video', title: 'Vídeo do projeto', videoUrl, embedUrl: videoEmbedUrl })
 
   custom.forEach((c, i) => list.push({ ...c, id: c.id || `custom-${i}`, type: 'custom' }))
 
