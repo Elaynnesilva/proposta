@@ -478,8 +478,14 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
   useEffect(() => {
     function onKey(e) {
       if (editing || exporting) return
-      if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); handleAdvance() }
-      if (e.key === 'ArrowLeft') goPrev()
+      // digitando num campo (link do cliente, renomear…) as teclas são do campo, não do slide
+      const alvo = e.target
+      if (alvo?.tagName === 'INPUT' || alvo?.tagName === 'TEXTAREA' || alvo?.isContentEditable) return
+      // avançar/voltar aceitam também Page Down/Page Up e setas para baixo/cima: são as teclas
+      // que os passadores de slide (e os apps de celular que funcionam como controle remoto)
+      // enviam. Antes só as setas laterais e o espaço funcionavam, e o passador não fazia nada.
+      if (['ArrowRight', 'ArrowDown', 'PageDown', ' '].includes(e.key)) { e.preventDefault(); handleAdvance(); return }
+      if (['ArrowLeft', 'ArrowUp', 'PageUp'].includes(e.key)) { e.preventDefault(); goPrev(); return }
       if (e.key === 'Escape') {
         // durante a apresentação, Esc só encerra a apresentação. E o mesmo Esc que tirou a tela
         // cheia não pode, logo em seguida, ser lido como "sair da proposta" e jogar a pessoa
@@ -490,9 +496,20 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
         navigate(`/proposta/${id}/editar`)
       }
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    // "capture": a apresentação recebe a tecla antes de qualquer botão da página — um botão com
+    // foco (ex.: o "Apresentar" recém-clicado) não "engole" mais o espaço
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
   })
+
+  /**
+   * O vídeo do YouTube fica dentro de um "quadro" separado da página. Depois de clicar nele, o
+   * teclado passa a falar só com o vídeo, e as setas pararam de trocar de slide até alguém clicar
+   * fora. Ao mudar de slide, o foco volta para a apresentação.
+   */
+  useEffect(() => {
+    if (document.activeElement?.tagName === 'IFRAME') document.activeElement.blur()
+  }, [index])
 
   useEffect(() => {
     if (!slideNovoId) return
@@ -959,7 +976,7 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
           className={isFullscreen ? 'relative shrink-0 bg-ink w-full h-full overflow-hidden' : 'relative shrink-0 bg-ink overflow-hidden'}
           style={isFullscreen ? {} : { height: '38vh', minHeight: 220 }}
         >
-          <ScaledCanvas onClick={handleAdvance}>
+          <ScaledCanvas onClick={handleAdvance} onSwipeNext={handleAdvance} onSwipePrev={goPrev}>
             <SlideView slide={slide} c1={c1} c2={c2} c3={c3} revealCount={revealCount} settings={settings} />
           </ScaledCanvas>
           <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5 pointer-events-none">
@@ -1051,17 +1068,21 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
         )}
 
         <div className="relative flex-1 min-w-0 overflow-hidden">
-          <ScaledCanvas onClick={handleAdvance}>
+          <ScaledCanvas onClick={handleAdvance} onSwipeNext={handleAdvance} onSwipePrev={goPrev}>
             <SlideView slide={slide} c1={c1} c2={c2} c3={c3} revealCount={revealCount} settings={settings} />
           </ScaledCanvas>
 
           {apresentando && (
             <>
-              {/* canto superior direito "invisível": não aparece para o cliente, mas passando o
+              {/* setas discretas nos cantos de CIMA (e não no meio das laterais, onde ficam fora
+                  do modo apresentação): assim não cobrem fotos e textos do slide */}
+              <button onClick={(e) => { e.stopPropagation(); goPrev() }} className="absolute top-3 left-3 z-20 w-9 h-9 rounded-full bg-black/25 hover:bg-black/45 backdrop-blur flex items-center justify-center" title="Voltar">‹</button>
+              <button onClick={(e) => { e.stopPropagation(); handleAdvance() }} className="absolute top-3 right-3 z-20 w-9 h-9 rounded-full bg-black/25 hover:bg-black/45 backdrop-blur flex items-center justify-center" title="Avançar">›</button>
+              {/* canto inferior direito "invisível": não aparece para o cliente, mas passando o
                   mouse (ou tocando, num tablet sem tecla Esc) mostra a saída da apresentação */}
               <button
                 onClick={(e) => { e.stopPropagation(); sairApresentacao() }}
-                className="absolute top-0 right-0 z-20 px-4 py-3 text-xs opacity-0 hover:opacity-100 focus:opacity-100 transition"
+                className="absolute bottom-0 right-0 z-20 px-4 py-3 text-xs opacity-0 hover:opacity-100 focus:opacity-100 transition"
               >
                 <span className="bg-black/50 backdrop-blur px-3 py-1.5 rounded-full">✕ Sair da apresentação</span>
               </button>
@@ -2360,7 +2381,7 @@ function Reveal({ i, revealCount, children, className = '', style }) {
  * computador, só em tamanho menor — e ao girar o celular pra paisagem, o espaço disponível
  * aumenta e a escala aumenta junto, sem esquisitices de layout responsivo quebrando slide.
  */
-function ScaledCanvas({ children, onClick }) {
+function ScaledCanvas({ children, onClick, onSwipeNext, onSwipePrev }) {
   const outerRef = useRef(null)
   const [box, setBox] = useState({ scale: 1, left: 0, top: 0 })
 
@@ -2392,8 +2413,30 @@ function ScaledCanvas({ children, onClick }) {
     }
   }, [])
 
+  // arrastar o dedo para os lados (celular/tablet): para a esquerda avança, para a direita volta,
+  // como virar página. Um toque parado continua sendo "clique" (avança), pelo onClick normal.
+  const toqueRef = useRef(null)
+  function inicioToque(e) {
+    const t = e.touches[0]
+    toqueRef.current = { x: t.clientX, y: t.clientY }
+  }
+  function fimToque(e) {
+    const inicio = toqueRef.current
+    toqueRef.current = null
+    if (!inicio) return
+    const t = e.changedTouches[0]
+    const dx = t.clientX - inicio.x
+    const dy = t.clientY - inicio.y
+    // só conta como arrastar se foi claramente para o lado (e não rolagem para cima/baixo)
+    if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy) * 1.5) return
+    // impede que o mesmo gesto também vire um "clique" e pule mais um slide
+    e.preventDefault()
+    if (dx < 0) onSwipeNext?.()
+    else onSwipePrev?.()
+  }
+
   return (
-    <div ref={outerRef} className="absolute inset-0 cursor-pointer overflow-hidden" onClick={onClick} style={{ background: INK }}>
+    <div ref={outerRef} className="absolute inset-0 cursor-pointer overflow-hidden" onClick={onClick} onTouchStart={inicioToque} onTouchEnd={fimToque} style={{ background: INK }}>
       <div style={{ position: 'absolute', left: box.left, top: box.top, width: EXPORT_W, height: EXPORT_H, transform: `scale(${box.scale})`, transformOrigin: 'top left' }}>
         {children}
       </div>
