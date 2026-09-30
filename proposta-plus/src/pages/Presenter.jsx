@@ -328,7 +328,9 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
       saida.push(s)
       copias.filter((c) => c.copyOf === s.id).forEach((c) => {
         const { copyOf, id, ...edicoes } = c
-        saida.push({ ...s, ...edicoes, id, copyOf, isCopy: true })
+        // a cópia nasce com os textos do original mas é independente: sem fieldCode, ela guarda
+        // os próprios tópicos e não escreve por cima do campo de "Dados do projeto" do original
+        saida.push({ ...s, ...edicoes, id, copyOf, isCopy: true, fieldCode: undefined })
       })
     })
     // cópias cujo original foi ocultado ou não existe mais não podem sumir sem aviso
@@ -357,6 +359,13 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
       // override salvo por engano numa versão antiga, senão um texto desatualizado ficaria
       // "preso" ali pra sempre, escondendo qualquer atualização feita depois nos dados do projeto
       if (s.id === 'obra') merged.description = s.description
+      // mesma lógica para os tópicos do escopo (Plantas, Vistas 2D, Interiores…) e das etapas da
+      // jornada: eles vêm de "Dados do projeto". Antes, salvar o slide pelo painel gravava uma
+      // CÓPIA dos tópicos junto com a edição — e, salvando "para todas as propostas", a cópia de
+      // um cliente passava a aparecer no slide de todos os outros, escondendo o que estava nos
+      // dados (ex.: "Consultoria de interiores" nos dados, "Móveis Planejados" no slide).
+      // Agora os dados sempre ganham; cópias antigas que ficaram gravadas são simplesmente ignoradas.
+      if (s.fieldCode) merged.items = s.items
       // os prazos previstos de cada apresentação vêm sempre de "Dados do projeto" — um
       // override salvo antes (com as datas do cliente anterior) não pode congelá-los aqui.
       // Só a escolha de ocultar (hideDeadlines) é que continua vindo do que foi salvo.
@@ -1625,7 +1634,10 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
     const patch = slide.type === 'closing' ? { title, quote, author } : { title }
     patch.titleScale = titleScale
     patch.textScale = textScale
-    if (items) patch.items = items
+    // tópicos que vêm de "Dados do projeto" voltam para lá (só desta proposta), em vez de
+    // virarem uma cópia no slide — assim o slide e os dados nunca mais ficam diferentes
+    if (items && slide.fieldCode) onSaveFields?.({ [slide.fieldCode]: items.join('\n') })
+    else if (items) patch.items = items
     if (slide.type === 'divider') { patch.subtitle = subtitle }
     if (slide.type === 'journeyFlow') { patch.subtitle = subtitle }
     if (isClientRequest) { onSaveFields?.({ objetivoProjeto }) }
@@ -1892,6 +1904,7 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
             <button onClick={() => setItems([...items, ''])} className="text-xs text-clay">+ adicionar texto</button>
             {items.length > 0 && <button onClick={() => setItems(items.slice(0, -1))} className="text-xs text-red-600">remover último</button>}
           </div>
+          {slide.fieldCode && <p className="text-[11px] text-muted mt-2">Estes textos são os mesmos de "Dados do projeto": editar aqui atualiza lá, só nesta proposta.</p>}
         </div>
       )}
 

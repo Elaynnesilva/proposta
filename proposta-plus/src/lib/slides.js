@@ -85,11 +85,14 @@ export function buildSlides({ fields, content, images, settings, custom = [], vi
   list.push({ id: 'reasons', type: 'reasons', image: images.reasons, title: content.reasonsTitle, items: content.reasons })
   list.push({ id: 'div-3', type: 'divider', title: 'O que é preciso ser projetado para que o seu sonho seja realizado?', subtitle: content.scopeSubtitle })
 
-  // uma página por seção do escopo — só entra se tiver conteúdo de verdade
+  // uma página por seção do escopo — só entra se tiver conteúdo de verdade.
+  // fieldCode diz de qual campo de "Dados do projeto" vêm os tópicos: com ele, o Presenter
+  // sempre mostra o que está nos dados (nunca uma cópia antiga salva no slide) e o painel
+  // "Editar slide" grava os tópicos de volta nesse mesmo campo.
   Object.entries(SECTION_META).forEach(([code, meta]) => {
     const items = listItems(f(code))
     if (items.length === 0) return
-    list.push({ id: `scope-${code}`, type: 'scopeSection', title: meta.label, image: images.scope, images: [], imageLayout: 'row', items })
+    list.push({ id: `scope-${code}`, type: 'scopeSection', title: meta.label, image: images.scope, images: [], imageLayout: 'row', items, fieldCode: code })
   })
 
   list.push({
@@ -124,7 +127,9 @@ export function buildSlides({ fields, content, images, settings, custom = [], vi
   }
 
   const etapas = listItems(f('etapasPrincipais'))
-  list.push({ id: 'journey', type: 'journeyFlow', title: 'Jornada do cliente', subtitle: content.journeySubtitle, items: etapas.length ? etapas : content.journey, stepImages: [] })
+  // a jornada só fica ligada ao campo "Etapas principais" quando ele está preenchido; vazio,
+  // ela usa os textos padrão do modelo e continua editável como antes (sem fieldCode)
+  list.push({ id: 'journey', type: 'journeyFlow', title: 'Jornada do cliente', subtitle: content.journeySubtitle, items: etapas.length ? etapas : content.journey, stepImages: [], fieldCode: etapas.length ? 'etapasPrincipais' : undefined })
 
   /**
    * Prazo previsto de cada apresentação. Cada PACOTE tem a sua própria data para a 1ª, 2ª e
