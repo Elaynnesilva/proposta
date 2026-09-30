@@ -120,6 +120,17 @@ export const FIELD_GROUPS = [
     ],
   },
   {
+    // bônus é opcional e vale por pacote: vazio = o pacote aparece como sempre, sem o card de
+    // bônus. Os rótulos começam com "BÔNUS -" para não se confundirem com os benefícios acima
+    // na hora de colar a planilha (cada rótulo precisa apontar para um campo só).
+    group: 'Bônus de cada pacote (opcional, uma linha por bônus)',
+    fields: [
+      ['bonusCompleto', 'BÔNUS - PACOTE COMPLETO', '', true],
+      ['bonusBasico', 'BÔNUS - PACOTE BÁSICO', '', true],
+      ['bonusEssencial', 'BÔNUS - PACOTE ESSENCIAL', '', true],
+    ],
+  },
+  {
     group: 'Acompanhamento de obra',
     fields: [
       ['acompanhamentoObraMeses', 'Acompanhamento de obra (mêses)', ''],

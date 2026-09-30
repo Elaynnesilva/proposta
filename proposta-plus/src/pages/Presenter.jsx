@@ -1514,6 +1514,9 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
   // mesmo campo "Benefícios do pacote" que alimenta o card deste pacote no Resumo dos
   // pacotes — editar aqui ou lá atualiza o mesmo lugar (ver isPackagesSummary mais abaixo)
   const [packageBenefitsText, setPackageBenefitsText] = useState((slide.benefits || []).join('\n'))
+  // bônus do pacote: mesmo esquema dos benefícios — mora nos dados do projeto (campo "Bônus -
+  // Pacote ..."), então aparece aqui, no Resumo dos pacotes e em Dados do projeto ao mesmo tempo
+  const [packageBonusText, setPackageBonusText] = useState((slide.bonus || []).join('\n'))
   const isPackagesSummary = slide.type === 'packagesSummary'
   const [hidePayments, setHidePayments] = useState(!!slide.hidePayments)
   const [hideDescriptions, setHideDescriptions] = useState(!!slide.hideDescriptions)
@@ -1577,6 +1580,7 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
     setCoverImage({ url: slide.image || '', posX: slide.imagePosX, posY: slide.imagePosY })
     setObjetivoProjeto(slide.objetivoProjeto || '')
     setPackageBenefitsText((slide.benefits || []).join('\n'))
+    setPackageBonusText((slide.bonus || []).join('\n'))
     setHidePayments(!!slide.hidePayments)
     setHideDescriptions(!!slide.hideDescriptions)
     setPackageExtras((slide.packages || []).reduce((acc, pkg) => {
@@ -1627,7 +1631,10 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
     if (isClientRequest) { onSaveFields?.({ objetivoProjeto }) }
     // mesmo campo "Benefícios do pacote" usado no card deste pacote no Resumo dos pacotes —
     // editar num lugar atualiza o outro, porque os dois leem do mesmo campo da planilha
-    if (isPackagePricing) { onSaveFields?.({ [`beneficios${slide.packageId.charAt(0).toUpperCase()}${slide.packageId.slice(1)}`]: packageBenefitsText }) }
+    if (isPackagePricing) {
+      const pkgCap = `${slide.packageId.charAt(0).toUpperCase()}${slide.packageId.slice(1)}`
+      onSaveFields?.({ [`beneficios${pkgCap}`]: packageBenefitsText, [`bonus${pkgCap}`]: packageBonusText })
+    }
     // a página de "Acompanhamento de obra" busca a descrição direto de "Dados do projeto"
     // (campo Descrição do acompanhamento de obra) — editar aqui atualiza esse campo, então
     // não fica um texto "preso" só nesta proposta, desalinhado do resto dos dados
@@ -1803,6 +1810,16 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
             className="w-full text-sm p-2.5 rounded-lg border border-line outline-none focus:border-clay mb-1"
           />
           <p className="text-[11px] text-muted mb-4">Isso atualiza o mesmo card deste pacote no Resumo dos pacotes.</p>
+
+          <label className="text-xs font-medium text-ink/70 block mb-1">★ Bônus do pacote (opcional, um bônus por linha)</label>
+          <textarea
+            value={packageBonusText}
+            onChange={(e) => setPackageBonusText(e.target.value)}
+            placeholder="Projeto da fachada da casa"
+            rows={2}
+            className="w-full text-sm p-2.5 rounded-lg border border-line outline-none focus:border-clay mb-1"
+          />
+          <p className="text-[11px] text-muted mb-4">Deixe em branco para não mostrar bônus. O bônus aparece em destaque também no Resumo dos pacotes.</p>
         </div>
       )}
 
@@ -2708,6 +2725,16 @@ function SlideBody({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
                   <div className="text-base uppercase tracking-wide opacity-60 mb-1" style={{ color: heading }}>{pkg.label}</div>
                   <div className="text-3xl font-semibold mb-2" style={{ color: c1, fontFamily: STYLE.displayFont }}>{pkg.value}</div>
                   {pkg.schedule.length > 0 && <div className="text-sm mb-3" style={{ color: heading, opacity: 0.65 }}>{pkg.schedule.join(' · ')}</div>}
+                  {/* bônus em destaque: mesma "caixa escura com ★" do cartão de crédito recomendado
+                      no slide do pacote, para o olho reconhecer como algo especial. Fica logo abaixo
+                      do valor e aparece mesmo com "descrições" ocultas — é argumento de venda, não
+                      detalhe. Pacote sem bônus não ganha caixa nenhuma. */}
+                  {pkg.bonus?.length > 0 && (
+                    <div className="px-4 py-3 mb-4" style={{ borderRadius: radius, background: c2, color: t2, boxShadow: '0 8px 24px rgba(0,0,0,0.12)' }}>
+                      <div className="text-xs font-semibold uppercase tracking-wide mb-1" style={{ color: c1OnC2 }}>★ Bônus do pacote</div>
+                      {pkg.bonus.map((b, k) => <div key={k} className="text-base font-semibold">{b}</div>)}
+                    </div>
+                  )}
                   {/* formas de pagamento e descrições podem ser ocultadas por proposta — e
                       ocultar as descrições não mexe na foto do pacote, que continua aparecendo */}
                   {!slide.hidePayments && pkg.paymentCards.length > 0 && (
@@ -2737,14 +2764,25 @@ function SlideBody({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
     case 'packagePricing': {
       const { bg, heading, titleColor } = slideColors(slide, SAND, c1)
       const hasBenefits = slide.benefits && slide.benefits.length > 0
+      const hasBonus = slide.bonus && slide.bonus.length > 0
       return (
         <div className="w-full h-full grid grid-cols-2">
           {/* metade esquerda: título + benefícios do pacote — aparecem juntos, sem precisar clicar */}
           <div className="p-12 flex flex-col justify-center overflow-auto" style={{ background: bg }}>
             <h2 className="text-3xl mb-6" style={{ ...titleStyle, color: titleColor }}>{slide.title}</h2>
-            {hasBenefits && (
+            {(hasBenefits || hasBonus) && (
               <>
                 <div className="text-sm font-medium uppercase tracking-wide mb-3" style={{ color: heading, opacity: 0.6 }}>Benefícios do pacote</div>
+                {/* card branco do bônus, antes da lista de benefícios (desenho criado pela Elaynne).
+                    Fundo branco e texto grafite FIXOS, sem seguir a cor do slide: é o que faz o bônus
+                    saltar aos olhos sobre qualquer fundo, e mantém a leitura garantida.
+                    self-start: o card abraça o texto em vez de esticar até a borda da coluna. */}
+                {hasBonus && (
+                  <div className="self-start bg-white px-5 py-4 mb-4" style={{ borderRadius: radius, color: '#28313C', boxShadow: '0 8px 24px rgba(0,0,0,0.18)', maxWidth: '100%' }}>
+                    <div className="text-base font-semibold uppercase mb-2">★ Bônus do pacote:</div>
+                    {slide.bonus.map((b, i) => <div key={i} className="text-lg font-semibold">{b}</div>)}
+                  </div>
+                )}
                 <div className="space-y-2">
                   {slide.benefits.map((b, i) => (
                     <div key={i} className="auto-left-item flex items-start gap-2" style={{ animationDelay: `${i * 40}ms`, color: heading, opacity: 0.85 }}>

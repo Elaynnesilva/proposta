@@ -216,13 +216,14 @@ export function buildSlides({ fields, content, images, settings, custom = [], vi
       schedule,
       paymentCards,
       benefits: listItems(f(`beneficios${cap(pkg.id)}`)),
+      bonus: listItems(f(`bonus${cap(pkg.id)}`)),
     })
 
     // se a própria página do pacote está oculta (a pessoa não vai mostrar esse pacote pro
     // cliente), ele também não entra no resumo — senão ficava sozinho lá, contradizendo a
     // página que ela acabou de esconder
     if (!hiddenSlides.includes(`package-${pkg.id}`)) {
-      packageSummaries.push({ id: pkg.id, label: pkg.label, value: money(value), schedule, paymentCards, benefits: listItems(f(`beneficios${cap(pkg.id)}`)) })
+      packageSummaries.push({ id: pkg.id, label: pkg.label, value: money(value), schedule, paymentCards, benefits: listItems(f(`beneficios${cap(pkg.id)}`)), bonus: listItems(f(`bonus${cap(pkg.id)}`)) })
     }
   })
 
