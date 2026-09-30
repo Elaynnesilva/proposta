@@ -113,19 +113,6 @@ export function buildSlides({ fields, content, images, settings, custom = [], vi
   // proposta (slideOrder, no Presenter) vale mais do que esta ordem de fábrica.
   list.push({ id: 'video', type: 'video', title: 'Vídeo do projeto', videoUrl, embedUrl: videoEmbedUrl })
 
-  if (hasValue(f('acompanhamentoObraMeses')) || hasValue(f('acompanhamentoObraDias'))) {
-    list.push({
-      // imagem FIXA na lateral (e não uma faixa de fotos embaixo, como nas seções de escopo):
-      // é um slide de uma foto só, com posição (esquerda/direita) e enquadramento ajustáveis
-      id: 'obra', type: 'scopeSplit', title: 'Acompanhamento de obra', image: images.obra || images.scope,
-      description: f('acompanhamentoObraDescricao'),
-      items: [
-        hasValue(f('acompanhamentoObraMeses')) && `${f('acompanhamentoObraMeses')} meses de acompanhamento`,
-        hasValue(f('acompanhamentoObraDias')) && `${f('acompanhamentoObraDias')} dias de visita por mês`,
-      ].filter(Boolean),
-    })
-  }
-
   const etapas = listItems(f('etapasPrincipais'))
   // a jornada só fica ligada ao campo "Etapas principais" quando ele está preenchido; vazio,
   // ela usa os textos padrão do modelo e continua editável como antes (sem fieldCode)
@@ -138,7 +125,10 @@ export function buildSlides({ fields, content, images, settings, custom = [], vi
    * aparecendo nesta proposta.
    */
   const prazosDaApresentacao = (n) => PACKAGE_LIST
-    .filter((pkg) => vis.packages[pkg.id] !== false && hasValue(f(`pacote${cap(pkg.id)}Valor`)))
+    // pacote com a página oculta (o "olhinho" riscado na lista de slides) também sai dos prazos:
+    // a pessoa decidiu não mostrar esse pacote ao cliente, e a data dele aqui contradizia isso
+    // (mesma regra do Resumo dos pacotes, mais abaixo)
+    .filter((pkg) => vis.packages[pkg.id] !== false && !hiddenSlides.includes(`package-${pkg.id}`) && hasValue(f(`pacote${cap(pkg.id)}Valor`)))
     .map((pkg) => ({ id: pkg.id, label: pkg.label, date: f(`${pkg.id}Apresentacao${n}`) }))
     .filter((d) => hasValue(d.date))
 
@@ -149,6 +139,21 @@ export function buildSlides({ fields, content, images, settings, custom = [], vi
     stages: (content.stages || []).map((st, i) => ({ ...st, deadlines: i < 3 ? prazosDaApresentacao(i + 1) : [] })),
     footnote: content.observations,
   })
+
+  // acompanhamento de obra vem depois das Apresentações de projeto: na conversa com o cliente,
+  // primeiro se explica como o projeto é entregue, e só então o que acontece na obra
+  if (hasValue(f('acompanhamentoObraMeses')) || hasValue(f('acompanhamentoObraDias'))) {
+    list.push({
+      // imagem FIXA na lateral (e não uma faixa de fotos embaixo, como nas seções de escopo):
+      // é um slide de uma foto só, com posição (esquerda/direita) e enquadramento ajustáveis
+      id: 'obra', type: 'scopeSplit', title: 'Acompanhamento de obra', image: images.obra || images.scope,
+      description: f('acompanhamentoObraDescricao'),
+      items: [
+        hasValue(f('acompanhamentoObraMeses')) && `${f('acompanhamentoObraMeses')} meses de acompanhamento`,
+        hasValue(f('acompanhamentoObraDias')) && `${f('acompanhamentoObraDias')} dias de visita por mês`,
+      ].filter(Boolean),
+    })
+  }
 
   if (content.feedbacks?.length) {
     list.push({ id: 'feedbacks', type: 'feedbacks', title: content.feedbacksTitle, items: content.feedbacks })

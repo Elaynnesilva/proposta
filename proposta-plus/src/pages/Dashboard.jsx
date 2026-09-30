@@ -456,7 +456,15 @@ function isUntouchedDraft(p) {
   if (p.videoUrl || p.videoEmbedUrl || p.public) return false
   if (p.acceptedValue != null || p.acceptedPackageId) return false
   if (p.palette && DEFAULT_PALETTE.some((hex, i) => p.palette[i] !== hex)) return false
-  return !Object.values(p.fields || {}).some((v) => String(v || '').trim() !== '')
+  // "intocado" = cada campo vazio ou igual ao valor com que a proposta nasceu. Não dá mais para
+  // testar só "tudo vazio": a Jornada do cliente já nasce preenchida, e aí nenhum rascunho
+  // abandonado seria reconhecido nem apagado. O "vazio" continua valendo para os rascunhos
+  // criados antes da jornada padrão existir.
+  const padrao = defaultFieldsObject()
+  return !Object.entries(p.fields || {}).some(([code, v]) => {
+    const texto = String(v || '').trim()
+    return texto !== '' && texto !== String(padrao[code] || '').trim()
+  })
 }
 
 /** updatedAt pode vir como Timestamp do Firestore, objeto {seconds} ou string — normaliza. */

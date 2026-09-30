@@ -142,6 +142,11 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
   // a apresentação pula pra ele e já abre o painel de edição
   const [slideNovoId, setSlideNovoId] = useState(null)
   const [isFullscreen, setIsFullscreen] = useState(false)
+  // modo "Apresentar": só o slide na tela, em tela cheia, sem lista lateral, botões, setas ou
+  // bolinhas — é o que o cliente vê. Navega com clique, setas e espaço; sai com Esc.
+  const [apresentando, setApresentando] = useState(false)
+  const [dicaSair, setDicaSair] = useState(false)
+  const saiuDaApresentacaoEm = useRef(0)
   const exportRef = useRef(null)
   const mobileSlideRef = useRef(null)
 
@@ -226,9 +231,36 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
     }
   }
 
+  async function entrarApresentacao() {
+    setEditing(false)
+    setApresentando(true)
+    // o aviso "Esc para sair" aparece só nos primeiros segundos, pra quem apresenta — some
+    // antes do cliente reparar
+    setDicaSair(true)
+    setTimeout(() => setDicaSair(false), 2500)
+    // tela cheia de verdade esconde também a barra do navegador e a do Windows. Se o navegador
+    // não deixar, a apresentação continua ocupando a janela inteira do mesmo jeito.
+    try { await document.documentElement.requestFullscreen?.() } catch { /* segue sem tela cheia */ }
+  }
+
+  async function sairApresentacao() {
+    saiuDaApresentacaoEm.current = Date.now()
+    setApresentando(false)
+    setDicaSair(false)
+    try { if (document.fullscreenElement) await document.exitFullscreen?.() } catch { /* ignora */ }
+  }
+
   useEffect(() => {
     function onFsChange() {
-      if (!document.fullscreenElement) setIsFullscreen(false)
+      if (!document.fullscreenElement) {
+        setIsFullscreen(false)
+        // Esc no navegador sai da tela cheia sozinho; aqui a apresentação acompanha e volta
+        // a mostrar os botões, em vez de ficar "presa" sem nenhum jeito de editar
+        setApresentando((estava) => {
+          if (estava) saiuDaApresentacaoEm.current = Date.now()
+          return false
+        })
+      }
     }
     document.addEventListener('fullscreenchange', onFsChange)
     return () => document.removeEventListener('fullscreenchange', onFsChange)
@@ -448,7 +480,15 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
       if (editing || exporting) return
       if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); handleAdvance() }
       if (e.key === 'ArrowLeft') goPrev()
-      if (e.key === 'Escape') navigate(`/proposta/${id}/editar`)
+      if (e.key === 'Escape') {
+        // durante a apresentação, Esc só encerra a apresentação. E o mesmo Esc que tirou a tela
+        // cheia não pode, logo em seguida, ser lido como "sair da proposta" e jogar a pessoa
+        // para o editor no meio da reunião — por isso a janela de 1 segundo
+        if (apresentando) { sairApresentacao(); return }
+        if (Date.now() - saiuDaApresentacaoEm.current < 1000) return
+        if (isPublic) return
+        navigate(`/proposta/${id}/editar`)
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -998,7 +1038,7 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
 
       {/* ============ DESKTOP ("sm" pra cima): layout original lado a lado ============ */}
       <div className="hidden sm:flex h-full">
-        {sidebarOpen && (
+        {sidebarOpen && !apresentando && (
           <SlideSidebar
             slides={isPublic ? visibleSlides : slides}
             currentId={slide?.id}
@@ -1015,6 +1055,25 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
             <SlideView slide={slide} c1={c1} c2={c2} c3={c3} revealCount={revealCount} settings={settings} />
           </ScaledCanvas>
 
+          {apresentando && (
+            <>
+              {/* canto superior direito "invisível": não aparece para o cliente, mas passando o
+                  mouse (ou tocando, num tablet sem tecla Esc) mostra a saída da apresentação */}
+              <button
+                onClick={(e) => { e.stopPropagation(); sairApresentacao() }}
+                className="absolute top-0 right-0 z-20 px-4 py-3 text-xs opacity-0 hover:opacity-100 focus:opacity-100 transition"
+              >
+                <span className="bg-black/50 backdrop-blur px-3 py-1.5 rounded-full">✕ Sair da apresentação</span>
+              </button>
+              {dicaSair && (
+                <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 text-xs bg-black/60 backdrop-blur px-3 py-1.5 rounded-full pointer-events-none">
+                  Clique ou use as setas para avançar · Esc para sair
+                </div>
+              )}
+            </>
+          )}
+
+          {!apresentando && (<>
           <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-2 sm:px-4 py-2 sm:py-3 pointer-events-none gap-1 sm:gap-2">
             <div className="flex items-center gap-1 sm:gap-2 pointer-events-auto">
               {!sidebarOpen && (
@@ -1025,6 +1084,10 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
               )}
             </div>
             <div className="flex items-center gap-1 sm:gap-2 pointer-events-auto overflow-x-auto max-w-[70vw] sm:max-w-none">
+              {/* primeiro botão e com a cor da marca: é o que se usa na frente do cliente */}
+              <button onClick={(e) => { e.stopPropagation(); entrarApresentacao() }} className="text-xs px-2.5 sm:px-3 py-1.5 rounded-full transition shrink-0 font-medium hover:opacity-90" style={{ background: c1 }}>
+                ▶<span className="hidden sm:inline"> Apresentar</span>
+              </button>
               {!isPublic && (
                 <>
                   {podeEditar && (
@@ -1066,8 +1129,9 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
 
           <button onClick={(e) => { e.stopPropagation(); goPrev() }} className="absolute left-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/25 hover:bg-black/45 backdrop-blur flex items-center justify-center">‹</button>
           <button onClick={(e) => { e.stopPropagation(); handleAdvance() }} className="absolute right-3 top-1/2 -translate-y-1/2 w-9 h-9 rounded-full bg-black/25 hover:bg-black/45 backdrop-blur flex items-center justify-center">›</button>
+          </>)}
 
-          {editing && slide && (
+          {editing && slide && !apresentando && (
             <EditPanel
               slide={slide}
               palette={palette}

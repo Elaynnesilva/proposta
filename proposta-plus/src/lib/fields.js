@@ -45,6 +45,26 @@ function packageFieldGroups() {
 
 function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1) }
 
+/**
+ * Jornada do cliente com que TODA proposta nova começa (definida pela Elaynne). Fica gravada no
+ * campo "Etapas principais" da proposta no momento em que ela é criada — então editar a jornada
+ * de uma proposta muda só aquela, e a próxima proposta nova volta a começar com esta lista.
+ * Para mudar o padrão, é só editar as linhas abaixo.
+ */
+export const JORNADA_PADRAO = [
+  'Pré-briefing, contrato e estudo inicial',
+  'Briefing e Levantamento de medidas',
+  'Estudo preliminar e modelagem do projeto',
+  '1° Apresentação - Estudo preliminar',
+  '1° Modificações necessárias',
+  '2° Apresentação - Projeto gráfico - Imagens e Vídeos realistas',
+  '2° Modificações necessárias',
+  'Pré-projeto (para a prefeitura)',
+  'Elaboração do caderno executivo',
+  '3° Apresentação / Entrega final',
+  'Acompanhamento da reforma/obra',
+].join('\n')
+
 export const PACKAGE_LIST = PACKAGES
 
 export const FIELD_GROUPS = [
@@ -81,7 +101,7 @@ export const FIELD_GROUPS = [
   },
   {
     group: 'Descrição do projeto — Etapas principais (uma linha por item)',
-    fields: [['etapasPrincipais', 'Etapas principais', '', true]],
+    fields: [['etapasPrincipais', 'Etapas principais', JORNADA_PADRAO, true]],
   },
   {
     group: 'Escopo — Plantas gerais (uma linha por item)',

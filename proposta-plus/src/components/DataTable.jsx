@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { FIELD_GROUPS, ALL_FIELD_CODES, LABEL_TO_CODE, LIST_FIELD_CODES, normalizeLabel, mesesParaTexto } from '../lib/fields'
+import { FIELD_GROUPS, ALL_FIELD_CODES, LABEL_TO_CODE, LIST_FIELD_CODES, normalizeLabel, mesesParaTexto, defaultFieldsObject } from '../lib/fields'
 
 // tenta casar o texto que a pessoa colou na 1a coluna com um campo conhecido,
 // aceitando o nome interno OU qualquer um dos rotulos em portugues daquele campo
@@ -59,8 +59,12 @@ export default function DataTable({ fields, onChange }) {
         next[lastCode] = next[lastCode] ? `${next[lastCode]}\n${line.trim()}` : line.trim()
       }
     })
+    // campo-lista que veio vazio na planilha volta ao valor padrão dele — para quase todos é
+    // "vazio" mesmo, mas a Jornada do cliente tem uma lista padrão: sem isso, colar uma planilha
+    // com a linha "Etapas principais" em branco apagava a jornada que a proposta nova já trazia
+    const padrao = defaultFieldsObject()
     Object.entries(listBuffers).forEach(([code, items]) => {
-      next[code] = items.join('\n')
+      next[code] = items.length ? items.join('\n') : (padrao[code] || '')
     })
     onChange(next)
     setPasteText('')
