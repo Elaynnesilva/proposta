@@ -7,7 +7,7 @@ import { auth } from '../lib/firebase'
 import { buildSlides } from '../lib/slides'
 import { DEFAULT_IMAGES, DEFAULT_SHARED_TEXT } from '../lib/content'
 import { STYLE, paletteToCssVars, readableTextColor, isLowContrast, DEFAULT_PALETTE, FIXED_SWATCHES } from '../lib/templates'
-import { toEmbedUrl, listItems } from '../lib/fields'
+import { toEmbedUrl, listItems, juntarTopicos } from '../lib/fields'
 
 const SLIDE_ICONS = {
   cover: '🏠', agenda: '📋', profile: '👩‍🎨', divider: '—', clientRequest: '🗂️',
@@ -1077,7 +1077,7 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
           style={isFullscreen ? {} : { height: '38vh', minHeight: 220 }}
         >
           <ScaledCanvas onClick={handleAdvance} onSwipeNext={handleAdvance} onSwipePrev={goPrev}>
-            <SlideView slide={slideNaTela} c1={c1} c2={c2} c3={c3} revealCount={revealCount} settings={settings} />
+            <SlideView slide={slideNaTela} c1={c1} c2={c2} c3={c3} revealCount={editing ? 999 : revealCount} settings={settings} />
           </ScaledCanvas>
           <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5 pointer-events-none">
             {visibleSlides.map((s, i) => (
@@ -1175,7 +1175,7 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
 
         <div className="relative flex-1 min-w-0 overflow-hidden">
           <ScaledCanvas onClick={handleAdvance} onSwipeNext={handleAdvance} onSwipePrev={goPrev}>
-            <SlideView slide={slideNaTela} c1={c1} c2={c2} c3={c3} revealCount={revealCount} settings={settings} />
+            <SlideView slide={slideNaTela} c1={c1} c2={c2} c3={c3} revealCount={editing ? 999 : revealCount} settings={settings} />
           </ScaledCanvas>
 
           {apresentando && (
@@ -1353,9 +1353,11 @@ function getItemsLength(slide) {
     const temDepois = (slide.rightImages?.length || 0) > 0 || String(slide.rightText || '').trim()
     return temDepois ? 1 : 0
   }
-  // slide livre (o "Novo slide" com posição e formato escolhidos): tudo aparece junto, sem
-  // etapas escondidas — com blocos em dois lados, um clique por item ficaria confuso
-  if (slide.type === 'custom' && slide.layoutMode) return 0
+  // slide livre (o "Novo slide" com posição e formato escolhidos): cada tópico, card (ou a
+  // descrição) e cada foto entra com um clique, primeiro o lado esquerdo, depois o direito
+  if (slide.type === 'custom' && slide.layoutMode && !slide.embedUrl && !slide.videoUrl) {
+    return blocosDoSlideLivre(slide).reduce((soma, b) => soma + conteudoDoBloco(b).passos, 0)
+  }
   // um feedback só, com fotos do projeto ao lado: aparece tudo junto, já ao abrir
   if (slide.type === 'feedbacks' && slide.feedbackLayout === 'unico') return 0
   // nestes dois, o texto aparece todo de uma vez — quem controla o clique agora são as imagens
@@ -1675,12 +1677,18 @@ function EditorDeBloco({ rotulo, bloco, setBloco, titulo, onTitulo, corFundo, on
       {formato === 'topicos' && (
         <div className="mb-3">
           {itens.map((t, i) => (
-            <div key={i} className="flex gap-1.5 mb-1.5">
-              <input value={t} onChange={(e) => { const v = e.target.value; setBloco((b) => ({ ...b, itens: (b.itens || ['']).map((x, k) => (k === i ? v : x)) })) }} className={campo} placeholder={`Tópico ${i + 1}`} />
-              <button onClick={() => setBloco((b) => ({ ...b, itens: (b.itens || ['']).filter((_, k) => k !== i) }))} className="text-xs text-red-600 shrink-0">✕</button>
+            <div key={i} className="flex gap-1.5 mb-1.5 items-start">
+              {/* caixa que cresce com o texto: Enter escreve na linha de baixo do MESMO tópico */}
+              <textarea
+                value={t} rows={Math.max(1, String(t || '').split('\n').length)}
+                onChange={(e) => { const v = e.target.value; setBloco((b) => ({ ...b, itens: (b.itens || ['']).map((x, k) => (k === i ? v : x)) })) }}
+                className={`${campo} resize-none`} placeholder={`Tópico ${i + 1}`}
+              />
+              <button onClick={() => setBloco((b) => ({ ...b, itens: (b.itens || ['']).filter((_, k) => k !== i) }))} className="text-xs text-red-600 shrink-0 mt-2">✕</button>
             </div>
           ))}
           <button onClick={() => setBloco((b) => ({ ...b, itens: [...(b.itens || ['']), ''] }))} className="text-xs text-clay">+ tópico</button>
+          <p className="text-[11px] text-muted mt-1">Enter continua o mesmo tópico na linha de baixo; "+ tópico" cria outro.</p>
         </div>
       )}
 
@@ -1690,6 +1698,12 @@ function EditorDeBloco({ rotulo, bloco, setBloco, titulo, onTitulo, corFundo, on
 
       {formato === 'cards' && (
         <div className="mb-3">
+          <label className="text-xs font-medium text-ink/70 block mb-1">Cards por linha</label>
+          <Escolha
+            valor={String(bloco.cardsPorLinha || '')}
+            onChange={(v) => setBloco((b) => ({ ...b, cardsPorLinha: v ? Number(v) : '' }))}
+            opcoes={[['', 'Automático'], ['1', '1'], ['2', '2'], ['3', '3'], ['4', '4']]}
+          />
           {cards.map((c, i) => (
             <div key={i} className="border border-line rounded-lg p-2 mb-2">
               <div className="flex gap-1.5 mb-1.5">
@@ -1904,6 +1918,27 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, onPreview, palette = D
   // (e não lido direto do slide) porque um slide extra antigo pode ser convertido aqui mesmo.
   const [layoutMode, setLayoutMode] = useState(slide.layoutMode || '')
   const [blocos, setBlocos] = useState(() => JSON.parse(JSON.stringify(slide.blocos || [{}, {}])))
+  // página dividida: qual lado está aberto para edição (0 = esquerdo, 1 = direito)
+  const [ladoAtivo, setLadoAtivo] = useState(0)
+
+  /**
+   * Troca o conteúdo dos dois lados de lugar — título, textos, fotos, posição e cores juntos —
+   * para quem começou a montar num lado e quer o conteúdo do outro, sem apagar e refazer.
+   * O título do lado esquerdo é o próprio título do slide; o do direito fica no bloco 2.
+   */
+  function trocarLados() {
+    const tituloEsquerdo = title
+    setTitle(blocos[1]?.titulo || '')
+    setBlocos((prev) => {
+      const { titulo: _semTitulo, ...direitoVaiParaEsquerda } = prev[1] || {}
+      return [direitoVaiParaEsquerda, { ...(prev[0] || {}), titulo: tituloEsquerdo }]
+    })
+    setBgColor(bgColor2); setBgColor2(bgColor)
+    setTextColor(textColor2); setTextColor2(textColor)
+    // a aba acompanha o conteúdo: quem estava editando o lado esquerdo continua vendo o mesmo
+    // conteúdo, agora na aba do lado direito
+    setLadoAtivo((l) => 1 - l)
+  }
   // o slide extra sem vídeo usa o mesmo desenho das seções de escopo, então também ganha a
   // lista de várias fotos (e o "não usar imagem" de verdade)
   const isCustomSemVideo = slide.type === 'custom' && !slide.embedUrl && !slide.videoUrl
@@ -1931,10 +1966,12 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, onPreview, palette = D
   const isPackagePricing = slide.type === 'packagePricing'
   // mesmo campo "Benefícios do pacote" que alimenta o card deste pacote no Resumo dos
   // pacotes — editar aqui ou lá atualiza o mesmo lugar (ver isPackagesSummary mais abaixo)
-  const [packageBenefitsText, setPackageBenefitsText] = useState((slide.benefits || []).join('\n'))
+  // juntarTopicos (e não um simples "uma linha por item"): mantém recuadas as linhas de
+  // continuação de um tópico com várias linhas, senão elas virariam tópicos novos ao salvar
+  const [packageBenefitsText, setPackageBenefitsText] = useState(juntarTopicos(slide.benefits))
   // bônus do pacote: mesmo esquema dos benefícios — mora nos dados do projeto (campo "Bônus -
   // Pacote ..."), então aparece aqui, no Resumo dos pacotes e em Dados do projeto ao mesmo tempo
-  const [packageBonusText, setPackageBonusText] = useState((slide.bonus || []).join('\n'))
+  const [packageBonusText, setPackageBonusText] = useState(juntarTopicos(slide.bonus))
   const isPackagesSummary = slide.type === 'packagesSummary'
   const [hidePayments, setHidePayments] = useState(!!slide.hidePayments)
   const [hideDescriptions, setHideDescriptions] = useState(!!slide.hideDescriptions)
@@ -1946,7 +1983,7 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, onPreview, palette = D
   // (slide.packages[].benefits, que vêm dos campos "Benefícios do pacote" de cada pacote) —
   // editar aqui atualiza os mesmos campos, então o que a pessoa vê é sempre o que pode editar
   const [packageBenefits, setPackageBenefits] = useState(() => (slide.packages || []).reduce((acc, pkg) => {
-    acc[pkg.id] = (pkg.benefits || []).join('\n')
+    acc[pkg.id] = juntarTopicos(pkg.benefits)
     return acc
   }, {}))
   const isVideo = slide.type === 'video'
@@ -2006,7 +2043,7 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, onPreview, palette = D
     patch.textScale = textScale
     // tópicos que vêm de "Dados do projeto" voltam para lá (só desta proposta), em vez de
     // virarem uma cópia no slide — assim o slide e os dados nunca mais ficam diferentes
-    if (items && slide.fieldCode) campos[slide.fieldCode] = items.join('\n')
+    if (items && slide.fieldCode) campos[slide.fieldCode] = juntarTopicos(items)
     else if (items && !livre) patch.items = items
     if (slide.type === 'divider') { patch.subtitle = subtitle }
     if (slide.type === 'journeyFlow') { patch.subtitle = subtitle }
@@ -2143,6 +2180,11 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, onPreview, palette = D
         <div className="mb-4 p-3 rounded-lg border-2 border-clay bg-clay/5">
           <div className="text-sm font-medium text-ink mb-2">Formato da página</div>
           <Escolha valor={layoutMode} onChange={setLayoutMode} opcoes={[['inteiro', 'Página inteira'], ['dividido', 'Dividida ao meio']]} />
+          {layoutMode === 'dividido' && (
+            <button onClick={trocarLados} className="text-xs px-3 py-1.5 rounded-full border border-clay text-clay hover:bg-clay hover:text-white transition">
+              ⇄ Trocar os lados de lugar
+            </button>
+          )}
         </div>
       )}
 
@@ -2155,8 +2197,21 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, onPreview, palette = D
       {/* no slide livre, título e cores ficam DENTRO do quadro de cada parte (página, ou lado
           esquerdo e lado direito): antes o título e as cores do lado esquerdo ficavam soltos lá em
           cima, longe do resto do lado esquerdo, e confundiam qual lado estava sendo editado */}
+      {livre && layoutMode === 'dividido' && (
+        // um lado por vez, escolhido nestes botões: com os dois quadros empilhados, o painel ficava
+        // comprido e era fácil editar o lado errado sem perceber
+        <div className="grid grid-cols-2 gap-2 mb-3">
+          {[[0, '◧ Lado esquerdo'], [1, 'Lado direito ◨']].map(([i, rotulo]) => (
+            <button
+              key={i} onClick={() => setLadoAtivo(i)}
+              className={`text-sm py-2.5 rounded-lg border-2 font-medium transition ${ladoAtivo === i ? 'bg-ink text-white border-ink' : 'border-line text-ink/70 hover:bg-sand'}`}
+            >{rotulo}</button>
+          ))}
+        </div>
+      )}
+
       {livre ? (
-        (layoutMode === 'dividido' ? [0, 1] : [0]).map((i) => (
+        (layoutMode === 'dividido' ? [ladoAtivo] : [0]).map((i) => (
           <EditorDeBloco
             key={i}
             rotulo={layoutMode === 'dividido' ? (i === 0 ? 'Lado esquerdo' : 'Lado direito') : 'Conteúdo da página'}
@@ -2239,7 +2294,7 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, onPreview, palette = D
                   rows={4}
                   className="w-full text-xs p-2 rounded border border-line outline-none focus:border-clay mb-2"
                 />
-                <p className="text-[11px] text-muted mb-2">Isso atualiza os mesmos tópicos do card "{pkg.label}" nos pacotes.</p>
+                <p className="text-[11px] text-muted mb-2">Isso atualiza os mesmos tópicos do card "{pkg.label}" nos pacotes. Linha começando com espaço continua o tópico de cima.</p>
                 <label className="text-xs font-medium text-ink/70 block mb-1">Texto extra (opcional, aparece embaixo da foto)</label>
                 <textarea
                   value={extra.description || ''}
@@ -2305,7 +2360,7 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, onPreview, palette = D
             rows={6}
             className="w-full text-sm p-2.5 rounded-lg border border-line outline-none focus:border-clay mb-1"
           />
-          <p className="text-[11px] text-muted mb-4">Isso atualiza o mesmo card deste pacote no Resumo dos pacotes.</p>
+          <p className="text-[11px] text-muted mb-4">Isso atualiza o mesmo card deste pacote no Resumo dos pacotes. Para continuar o mesmo tópico na linha de baixo, comece a linha com um espaço.</p>
 
           <label className="text-xs font-medium text-ink/70 block mb-1">★ Bônus do pacote (opcional, um bônus por linha)</label>
           <textarea
@@ -2388,6 +2443,7 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, onPreview, palette = D
             <button onClick={() => setItems([...items, ''])} className="text-xs text-clay">+ adicionar texto</button>
             {items.length > 0 && <button onClick={() => setItems(items.slice(0, -1))} className="text-xs text-red-600">remover último</button>}
           </div>
+          <p className="text-[11px] text-muted mt-2">Enter quebra a linha dentro do mesmo texto; "+ adicionar texto" cria outro.</p>
           {slide.fieldCode && <p className="text-[11px] text-muted mt-2">Estes textos são os mesmos de "Dados do projeto": editar aqui atualiza lá, só nesta proposta.</p>}
         </div>
       )}
@@ -2433,10 +2489,11 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, onPreview, palette = D
               </div>
               {(s.items || []).map((it, k) => (
                 <div key={k} className="flex gap-1 mb-1.5">
-                  <input
-                    value={it}
+                  {/* caixa que cresce com o texto: Enter quebra a linha dentro do mesmo item */}
+                  <textarea
+                    value={it} rows={Math.max(1, String(it || '').split('\n').length)}
                     onChange={(e) => setStages((prev) => prev.map((p, pi) => pi === i ? { ...p, items: p.items.map((x, xi) => xi === k ? e.target.value : x) } : p))}
-                    className="flex-1 text-xs p-1.5 rounded border border-line outline-none focus:border-clay"
+                    className="flex-1 text-xs p-1.5 rounded border border-line outline-none focus:border-clay resize-none"
                   />
                   <button onClick={() => setStages((prev) => prev.map((p, pi) => pi === i ? { ...p, items: p.items.filter((_, xi) => xi !== k) } : p))} className="text-xs text-red-600">✕</button>
                 </div>
@@ -3434,7 +3491,7 @@ function SlideBody({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
       // slide livre: a pessoa escolhe página inteira ou dividida, o formato do texto e a posição.
       // Slides extras criados antes disso (sem layoutMode) seguem com o desenho antigo, abaixo.
       if (slide.layoutMode && !slide.embedUrl && !slide.videoUrl) {
-        return <SlideLivre slide={slide} c1={c1} radius={radius} />
+        return <SlideLivre slide={slide} c1={c1} radius={radius} revealCount={revealCount} />
       }
       // sem vídeo, o slide extra passa a se comportar exatamente como as seções de escopo:
       // título, tópicos e uma faixa de fotos (nenhuma, uma ou várias). É isso que faz o
@@ -3882,34 +3939,57 @@ function AntesDepoisSlide({ slide, c1, revealCount, radius }) {
  * posição escolhida (esquerda/centro/direita × topo/meio/embaixo). O título da página inteira —
  * ou do lado esquerdo — é o próprio título do slide (o que aparece na lista lateral).
  */
-function SlideLivre({ slide, c1, radius }) {
+/**
+ * O que um bloco do slide livre realmente mostra (sem tópicos/cards vazios) e em quantos cliques.
+ * Fica num lugar só porque o desenho (BlocoLivre) e a contagem de cliques (getItemsLength)
+ * precisam concordar: se contassem diferente, sobraria clique "no vazio" ou faltaria clique e
+ * algum item nunca apareceria.
+ */
+function conteudoDoBloco(bloco) {
+  const formato = bloco.formato || 'topicos'
+  const topicos = (bloco.itens || []).filter((t) => String(t || '').trim())
+  const cards = (bloco.cards || []).filter((c) => String(c.titulo || '').trim() || String(c.texto || '').trim())
+  const descricao = String(bloco.texto || '').trim()
+  const fotos = bloco.imagens || []
+  const passosTexto = formato === 'topicos' ? topicos.length : formato === 'cards' ? cards.length : formato === 'descricao' && descricao ? 1 : 0
+  return { formato, topicos, cards, descricao, fotos, passosTexto, passos: passosTexto + fotos.length }
+}
+
+/** Blocos que aparecem no slide livre: um na página inteira, dois na dividida. */
+function blocosDoSlideLivre(slide) {
   const blocos = slide.blocos || []
-  const blocoA = { ...(blocos[0] || {}), titulo: slide.title }
+  return slide.layoutMode === 'dividido' ? [blocos[0] || {}, blocos[1] || {}] : [blocos[0] || {}]
+}
+
+function SlideLivre({ slide, c1, radius, revealCount }) {
+  const blocos = blocosDoSlideLivre(slide)
+  const blocoA = { ...blocos[0], titulo: slide.title }
   if (slide.layoutMode === 'dividido') {
     const coresA = slideColors(slide, SAND, c1)
     const coresB = slideColors({ bgColor: slide.bgColor2, textColor: slide.textColor2 }, '#FFFFFF', c1)
+    // os cliques seguem a leitura: primeiro tudo do lado esquerdo, depois o direito
+    const inicioB = conteudoDoBloco(blocos[0]).passos
     return (
       <div className="w-full h-full grid grid-cols-2">
-        <BlocoLivre bloco={blocoA} cores={coresA} c1={c1} radius={radius} metade />
-        <BlocoLivre bloco={blocos[1] || {}} cores={coresB} c1={c1} radius={radius} metade />
+        <BlocoLivre bloco={blocoA} cores={coresA} c1={c1} radius={radius} metade revealCount={revealCount} inicio={0} />
+        <BlocoLivre bloco={blocos[1]} cores={coresB} c1={c1} radius={radius} metade revealCount={revealCount} inicio={inicioB} />
       </div>
     )
   }
-  return <BlocoLivre bloco={blocoA} cores={slideColors(slide, SAND, c1)} c1={c1} radius={radius} />
+  return <BlocoLivre bloco={blocoA} cores={slideColors(slide, SAND, c1)} c1={c1} radius={radius} revealCount={revealCount} inicio={0} />
 }
 
 const ALINHAR_H = { left: 'flex-start', center: 'center', right: 'flex-end' }
 const ALINHAR_V = { top: 'flex-start', center: 'center', bottom: 'flex-end' }
 
-function BlocoLivre({ bloco, cores, c1, radius, metade = false }) {
+/** Um bloco do slide livre. O título aparece já ao abrir; cada tópico, card (ou a descrição) e
+ *  cada foto entra com um clique, contando a partir de "inicio". */
+function BlocoLivre({ bloco, cores, c1, radius, metade = false, revealCount = 999, inicio = 0 }) {
   const h = bloco.alinhH || 'left'
   const v = bloco.alinhV || 'center'
-  const fotos = bloco.imagens || []
-  const formato = bloco.formato || 'topicos'
-  const topicos = (bloco.itens || []).filter((t) => String(t || '').trim())
-  const cards = (bloco.cards || []).filter((c) => String(c.titulo || '').trim() || String(c.texto || '').trim())
-  const descricao = String(bloco.texto || '').trim()
-  const temTexto = (formato === 'topicos' && topicos.length) || (formato === 'descricao' && descricao) || (formato === 'cards' && cards.length)
+  const { formato, topicos, cards, descricao, fotos, passosTexto } = conteudoDoBloco(bloco)
+  const temTexto = passosTexto > 0
+  const colunasCards = Number(bloco.cardsPorLinha) > 0 ? Number(bloco.cardsPorLinha) : Math.min(cards.length, metade ? 2 : 3)
   const corDoCard = cores.heading === '#FFFFFF' ? 'rgba(255,255,255,0.1)' : '#FFFFFF'
   // sem foto, o texto pode ocupar a página toda (antes ficava preso numa coluna estreita);
   // a largura máxima só existe para a linha não ficar comprida demais de ler
@@ -3927,25 +4007,31 @@ function BlocoLivre({ bloco, cores, c1, radius, metade = false }) {
       {formato === 'topicos' && topicos.length > 0 && (
         <div className="space-y-3 shrink-0" style={{ maxWidth: larguraTexto }}>
           {topicos.map((t, i) => (
-            <div key={i} className="flex items-start gap-3 text-xl" style={{ justifyContent: ALINHAR_H[h], color: cores.heading, opacity: 0.85 }}>
-              <span style={{ color: c1 }}>●</span><span>{t}</span>
-            </div>
+            // Reveal por fora e a opacidade do texto por dentro: a animação controla a opacidade
+            // do Reveal, e uma opacidade escrita nele mesmo impediria o tópico de ficar escondido
+            <Reveal key={i} i={inicio + i} revealCount={revealCount}>
+              <div className="flex items-start gap-3 text-xl" style={{ justifyContent: ALINHAR_H[h], color: cores.heading, opacity: 0.85 }}>
+                <span style={{ color: c1 }}>●</span><span>{t}</span>
+              </div>
+            </Reveal>
           ))}
         </div>
       )}
 
       {formato === 'descricao' && descricao && (
         // "descrição grande": maior que um tópico, e ainda acompanha o controle de tamanho do texto
-        <p className="whitespace-pre-line shrink-0" style={{ maxWidth: larguraTexto, color: cores.heading, opacity: 0.85, fontSize: 'calc(1.6rem * var(--esc-texto))', lineHeight: 1.45 }}>{descricao}</p>
+        <Reveal i={inicio} revealCount={revealCount} className="shrink-0" style={{ maxWidth: larguraTexto }}>
+          <p className="whitespace-pre-line" style={{ color: cores.heading, opacity: 0.85, fontSize: 'calc(1.6rem * var(--esc-texto))', lineHeight: 1.45 }}>{descricao}</p>
+        </Reveal>
       )}
 
       {formato === 'cards' && cards.length > 0 && (
-        <div className="grid gap-4 shrink-0 w-full" style={{ gridTemplateColumns: `repeat(${Math.min(cards.length, metade ? 2 : 3)}, minmax(0, 1fr))` }}>
+        <div className="grid gap-4 shrink-0 w-full" style={{ gridTemplateColumns: `repeat(${colunasCards}, minmax(0, 1fr))` }}>
           {cards.map((c, i) => (
-            <div key={i} className="p-6" style={{ borderRadius: radius, background: corDoCard, border: corDoCard === '#FFFFFF' ? '1px solid #E4DFD6' : 'none' }}>
+            <Reveal key={i} i={inicio + i} revealCount={revealCount} className="p-6" style={{ borderRadius: radius, background: corDoCard, border: corDoCard === '#FFFFFF' ? '1px solid #E4DFD6' : 'none' }}>
               {String(c.titulo || '').trim() && <div className="text-lg font-semibold mb-2" style={{ color: c1 }}>{c.titulo}</div>}
               {String(c.texto || '').trim() && <div className="text-base whitespace-pre-line" style={{ color: corDoCard === '#FFFFFF' ? '#28313C' : cores.heading, opacity: 0.85 }}>{c.texto}</div>}
-            </div>
+            </Reveal>
           ))}
         </div>
       )}
@@ -3953,7 +4039,8 @@ function BlocoLivre({ bloco, cores, c1, radius, metade = false }) {
       {fotos.length > 0 && (
         <div className={`flex-1 min-h-0 w-full self-stretch ${String(bloco.titulo || '').trim() || temTexto ? 'mt-8' : ''}`}>
           <ImageStrip
-            imgs={fotos} layout="row" revealCount={999} radius={radius}
+            // as fotos vêm depois dos textos deste bloco: a 1ª foto é o clique seguinte ao último texto
+            imgs={fotos} layout="row" revealCount={revealCount - inicio - passosTexto} radius={radius}
             perRow={fotos.length > 3 ? Math.ceil(fotos.length / 2) : fotos.length}
             alinhar={h === 'center' ? 'center' : h === 'right' ? 'end' : 'start'}
           />

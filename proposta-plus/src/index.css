@@ -72,6 +72,13 @@ body {
  */
 .esc-fonte { --esc-titulo: 1; --esc-texto: 1; }
 
+/*
+ * Quebra de linha digitada (Enter) aparece também no slide, em qualquer texto: tópicos de
+ * várias linhas, descrições, cards. Sem isso o navegador juntava tudo numa linha só, e a
+ * pessoa digitava o tópico em duas linhas no painel mas via uma só no slide.
+ */
+.esc-fonte { white-space: pre-line; }
+
 .esc-fonte .text-2xl { font-size: calc(1.5rem   * var(--esc-titulo)); line-height: 1.25; }
 .esc-fonte .text-3xl { font-size: calc(1.875rem * var(--esc-titulo)); line-height: 1.2; }
 .esc-fonte .text-4xl { font-size: calc(2.25rem  * var(--esc-titulo)); line-height: 1.15; }

@@ -189,13 +189,34 @@ export function defaultFieldsObject() {
   return obj
 }
 
-/** Quebra um campo-lista (várias linhas) em itens, removendo vazios e "0" (placeholder de linha não usada na planilha) */
+/**
+ * Quebra um campo-lista (várias linhas) em itens, removendo vazios e "0" (placeholder de linha
+ * não usada na planilha).
+ *
+ * Tópico com mais de uma linha: nos campos-lista cada linha é um tópico, então uma quebra de
+ * linha DENTRO de um tópico precisa de um sinal. O sinal é a linha começar com espaço — ela
+ * continua o tópico de cima, em vez de virar um tópico novo. Em Dados do projeto isso aparece
+ * como uma linha recuada, logo abaixo do tópico a que pertence.
+ */
 export function listItems(value) {
   if (!value) return []
-  return String(value)
-    .split('\n')
-    .map((v) => v.trim())
-    .filter((v) => v && hasValue(v))
+  const itens = []
+  String(value).split('\n').forEach((linha) => {
+    const texto = linha.trim()
+    if (!texto) return
+    const continuacao = /^[ \t]/.test(linha) && itens.length > 0
+    if (continuacao) itens[itens.length - 1] += `\n${texto}`
+    else itens.push(texto)
+  })
+  return itens.filter((v) => hasValue(v))
+}
+
+/** O caminho de volta do listItems: junta os tópicos num campo-lista, recuando as linhas de
+ *  continuação de cada tópico para que, ao ler de novo, elas continuem no mesmo tópico. */
+export function juntarTopicos(lista) {
+  return (lista || [])
+    .map((t) => String(t || '').split('\n').map((l, i) => (i === 0 ? l.trim() : `   ${l.trim()}`)).filter((l, i) => i === 0 || l.trim()).join('\n'))
+    .join('\n')
 }
 
 /** Verdadeiro se o valor está vazio, é "0" ou é um valor monetário zerado (ex: "R$0,00") */
