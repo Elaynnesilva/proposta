@@ -428,8 +428,16 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
     if (order && order.length) {
       const byId = Object.fromEntries(list.map((s) => [s.id, s]))
       const ordered = order.map((sid) => byId[sid]).filter(Boolean)
-      const remaining = list.filter((s) => !order.includes(s.id))
-      list = [...ordered, ...remaining]
+      // slide que não existia quando a ordem foi gravada (ex.: o "Antes e depois", criado depois
+      // que a pessoa já tinha arrastado slides nesta proposta) entra logo depois do slide que vem
+      // antes dele na ordem padrão — e não no fim da apresentação, como acontecia antes
+      list.forEach((s, i) => {
+        if (order.includes(s.id)) return
+        let pos = -1
+        for (let k = i - 1; k >= 0 && pos < 0; k--) pos = ordered.findIndex((x) => x.id === list[k].id)
+        ordered.splice(pos + 1, 0, s)
+      })
+      list = ordered
     }
     return list
   }, [baseSlidesComCopias, templateContent, proposal?.tipologia, proposal?.slideOverrides, proposal?.slideOrder])
@@ -886,8 +894,20 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
       copyOf: original.copyOf || slideId,
       title: original.title ? `${original.title} (cópia)` : 'Cópia',
     }
-    updateProposal((prev) => ({ ...prev, customSlides: [...(prev.customSlides || []), copia] }))
+    updateProposal((prev) => ({ ...prev, customSlides: [...(prev.customSlides || []), copia], slideOrder: ordemComNovoDepoisDe(slideId, copia.id) }))
     setSlideNovoId(copia.id)
+  }
+
+  /**
+   * Ordem dos slides com um slide novo encaixado logo DEPOIS de outro (o que está na tela, ou o
+   * que foi duplicado). Antes o slide novo ia para o fim da apresentação e era preciso arrastá-lo
+   * de volta até o lugar certo. Grava a ordem completa, do jeito que já é feito ao arrastar.
+   */
+  function ordemComNovoDepoisDe(idReferencia, idNovo) {
+    const ids = slides.map((s) => s.id).filter((sid) => sid !== idNovo)
+    const pos = ids.indexOf(idReferencia)
+    ids.splice(pos >= 0 ? pos + 1 : ids.length, 0, idNovo)
+    return ids
   }
 
   /** Cria um slide extra já dentro da apresentação, pula pra ele e abre a edição. */
@@ -899,7 +919,7 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
       title: 'Novo slide', layoutMode: 'inteiro',
       blocos: [{ formato: 'topicos', itens: [''], alinhH: 'left', alinhV: 'center' }, { formato: 'topicos', itens: [''] }],
     }
-    updateProposal((prev) => ({ ...prev, customSlides: [...(prev.customSlides || []), novo] }))
+    updateProposal((prev) => ({ ...prev, customSlides: [...(prev.customSlides || []), novo], slideOrder: ordemComNovoDepoisDe(slide?.id, novo.id) }))
     setSlideNovoId(novo.id)
   }
 
@@ -1542,20 +1562,23 @@ function Escolha({ opcoes, valor, onChange }) {
 }
 
 /** Editor de um bloco do slide livre (página inteira, ou um dos lados da página dividida). */
-function EditorDeBloco({ rotulo, bloco, setBloco, mostrarTitulo, maxFotos, onPickFile }) {
+function EditorDeBloco({ rotulo, bloco, setBloco, titulo, onTitulo, corFundo, onCorFundo, corTexto, onCorTexto, palette, maxFotos, onPickFile }) {
   const formato = bloco.formato || 'topicos'
   const itens = bloco.itens || ['']
   const cards = bloco.cards || [{ titulo: '', texto: '' }]
   const campo = 'w-full text-sm p-2 rounded-lg border border-line outline-none focus:border-clay'
   return (
     <div className="border border-line rounded-lg p-3 mb-3">
-      {rotulo && <div className="text-sm font-medium mb-2">{rotulo}</div>}
-      {mostrarTitulo && (
-        <>
-          <label className="text-xs font-medium text-ink/70 block mb-1">Título</label>
-          <textarea value={bloco.titulo || ''} rows={2} onChange={(e) => { const titulo = e.target.value; setBloco((b) => ({ ...b, titulo })) }} className={`${campo} mb-3`} />
-        </>
-      )}
+      {rotulo && <div className="text-sm font-semibold mb-3 pb-2 border-b border-line">{rotulo}</div>}
+      <label className="text-xs font-medium text-ink/70 block mb-1">Título</label>
+      <textarea value={titulo} rows={2} onChange={(e) => onTitulo(e.target.value)} className={`${campo} mb-1`} />
+      <p className="text-[11px] text-muted mb-3">Enter quebra o título em mais de uma linha. Deixe vazio para não ter título.</p>
+
+      <label className="text-xs font-medium text-ink/70 block mb-1">Cor do fundo</label>
+      <ColorSwatchRow palette={palette} value={corFundo} onChange={onCorFundo} />
+      <label className="text-xs font-medium text-ink/70 block mb-1 mt-2">Cor do texto</label>
+      <ColorSwatchRow palette={palette} value={corTexto} onChange={onCorTexto} />
+      <div className="mb-3" />
 
       <label className="text-xs font-medium text-ink/70 block mb-1">Formato do texto</label>
       <Escolha
@@ -2026,18 +2049,56 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
         <button onClick={onClose} className="text-muted text-sm">✕</button>
       </div>
 
+      {/* slide livre: a primeira decisão é o formato da página, então ela vem antes de tudo e
+          em destaque — o resto do painel (um quadro ou dois) depende dela */}
+      {livre && (
+        <div className="mb-4 p-3 rounded-lg border-2 border-clay bg-clay/5">
+          <div className="text-sm font-medium text-ink mb-2">Formato da página</div>
+          <Escolha valor={layoutMode} onChange={setLayoutMode} opcoes={[['inteiro', 'Página inteira'], ['dividido', 'Dividida ao meio']]} />
+        </div>
+      )}
+
       <div className="mb-4 p-3 border border-line rounded-lg bg-sand">
         <div className="text-xs font-medium text-ink mb-2">Tamanho dos textos deste slide</div>
         <EscalaSlider label="Títulos" value={titleScale} onChange={setTitleScale} />
         <EscalaSlider label="Descrição, tópicos e demais textos" value={textScale} onChange={setTextScale} />
       </div>
 
-      <label className="text-xs font-medium text-ink/70 block mb-1">
-        {isBeforeAfter ? 'Nome do slide (aparece só na lista lateral)' : livre && layoutMode === 'dividido' ? 'Título do lado esquerdo' : 'Título'}
-      </label>
-      {/* caixa de várias linhas: dá pra apertar Enter e a quebra aparece igual no slide */}
-      <textarea value={title} rows={2} onChange={(e) => setTitle(e.target.value)} className="w-full text-sm p-2.5 rounded-lg border border-line outline-none focus:border-clay mb-1" />
-      <p className="text-[11px] text-muted mb-4">Aperte Enter para quebrar o título em mais de uma linha.</p>
+      {/* no slide livre, título e cores ficam DENTRO do quadro de cada parte (página, ou lado
+          esquerdo e lado direito): antes o título e as cores do lado esquerdo ficavam soltos lá em
+          cima, longe do resto do lado esquerdo, e confundiam qual lado estava sendo editado */}
+      {livre ? (
+        (layoutMode === 'dividido' ? [0, 1] : [0]).map((i) => (
+          <EditorDeBloco
+            key={i}
+            rotulo={layoutMode === 'dividido' ? (i === 0 ? 'Lado esquerdo' : 'Lado direito') : 'Conteúdo da página'}
+            titulo={i === 0 ? title : (blocos[1]?.titulo || '')}
+            onTitulo={i === 0 ? setTitle : (v) => setBlocos((prev) => [prev[0] || {}, { ...(prev[1] || {}), titulo: v }])}
+            corFundo={i === 0 ? bgColor : bgColor2}
+            onCorFundo={i === 0 ? setBgColor : setBgColor2}
+            corTexto={i === 0 ? textColor : textColor2}
+            onCorTexto={i === 0 ? setTextColor : setTextColor2}
+            palette={palette}
+            maxFotos={layoutMode === 'dividido' ? 4 : 6}
+            bloco={blocos[i] || {}}
+            setBloco={(upd) => setBlocos((prev) => {
+              const proximo = [prev[0] || {}, prev[1] || {}]
+              proximo[i] = upd(proximo[i])
+              return proximo
+            })}
+            onPickFile={handleImageFile}
+          />
+        ))
+      ) : (
+        <>
+          <label className="text-xs font-medium text-ink/70 block mb-1">
+            {isBeforeAfter ? 'Nome do slide (aparece só na lista lateral)' : 'Título'}
+          </label>
+          {/* caixa de várias linhas: dá pra apertar Enter e a quebra aparece igual no slide */}
+          <textarea value={title} rows={2} onChange={(e) => setTitle(e.target.value)} className="w-full text-sm p-2.5 rounded-lg border border-line outline-none focus:border-clay mb-1" />
+          <p className="text-[11px] text-muted mb-4">Aperte Enter para quebrar o título em mais de uma linha.</p>
+        </>
+      )}
 
       {isCover && (
         <>
@@ -2120,7 +2181,7 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
         </>
       )}
 
-      {COLOR_CUSTOMIZABLE_TYPES.has(slide.type) && (
+      {COLOR_CUSTOMIZABLE_TYPES.has(slide.type) && !livre && (
         <>
           <label className="text-xs font-medium text-ink/70 block mb-1">Cor do fundo</label>
           <ColorSwatchRow palette={palette} value={bgColor} onChange={setBgColor} />
@@ -2129,13 +2190,14 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
           <ColorSwatchRow palette={palette} value={textColor} onChange={setTextColor} />
           <p className="text-[11px] text-muted mt-1">A cor escolhida vale também para o título. Se ficar difícil de ler sobre o fundo, o sistema clareia ou escurece o mesmo tom até dar contraste.</p>
           {isCover && <p className="text-[11px] text-muted mt-1">Na capa, a cor do texto vale também sobre a foto de fundo. Sem cor escolhida, o texto volta a ser branco.</p>}
-          {(isBeforeAfter || (livre && layoutMode === 'dividido')) && <p className="text-[11px] text-muted mt-1">As cores acima valem para o lado esquerdo.</p>}
+          {isBeforeAfter && <p className="text-[11px] text-muted mt-1">As cores acima valem para o lado esquerdo.</p>}
           <div className="mb-4" />
         </>
       )}
 
-      {/* página dividida: o lado direito tem cores próprias (sem escolha, fundo branco) */}
-      {(isBeforeAfter || (livre && layoutMode === 'dividido')) && (
+      {/* antes e depois: o lado direito tem cores próprias (sem escolha, fundo branco). No slide
+          livre, as cores de cada lado ficam dentro do quadro daquele lado (ver EditorDeBloco). */}
+      {isBeforeAfter && (
         <>
           <label className="text-xs font-medium text-ink/70 block mb-1">Cor do fundo — lado direito</label>
           <ColorSwatchRow palette={palette} value={bgColor2} onChange={setBgColor2} />
@@ -2471,27 +2533,6 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
         </div>
       )}
 
-      {livre && (
-        <div className="mb-4">
-          <label className="text-xs font-medium text-ink/70 block mb-1">Formato da página</label>
-          <Escolha valor={layoutMode} onChange={setLayoutMode} opcoes={[['inteiro', 'Página inteira'], ['dividido', 'Dividida ao meio']]} />
-          {(layoutMode === 'dividido' ? [0, 1] : [0]).map((i) => (
-            <EditorDeBloco
-              key={i}
-              rotulo={layoutMode === 'dividido' ? (i === 0 ? 'Lado esquerdo' : 'Lado direito') : ''}
-              mostrarTitulo={i === 1}
-              maxFotos={layoutMode === 'dividido' ? 4 : 6}
-              bloco={blocos[i] || {}}
-              setBloco={(upd) => setBlocos((prev) => {
-                const proximo = [prev[0] || {}, prev[1] || {}]
-                proximo[i] = upd(proximo[i])
-                return proximo
-              })}
-              onPickFile={handleImageFile}
-            />
-          ))}
-        </div>
-      )}
 
       {slide.type === 'journeyFlow' && items && (
         <div className="mb-4">
