@@ -1356,7 +1356,8 @@ function getItemsLength(slide) {
   // slide livre (o "Novo slide" com posição e formato escolhidos): cada tópico, card (ou a
   // descrição) e cada foto entra com um clique, primeiro o lado esquerdo, depois o direito
   if (slide.type === 'custom' && slide.layoutMode && !slide.embedUrl && !slide.videoUrl) {
-    return blocosDoSlideLivre(slide).reduce((soma, b) => soma + conteudoDoBloco(b).passos, 0)
+    // só o lado direito (2º bloco) tem o título contado como clique
+    return blocosDoSlideLivre(slide).reduce((soma, b, i) => soma + conteudoDoBloco(b, i === 1).passos, 0)
   }
   // um feedback só, com fotos do projeto ao lado: aparece tudo junto, já ao abrir
   if (slide.type === 'feedbacks' && slide.feedbackLayout === 'unico') return 0
@@ -3945,14 +3946,17 @@ function AntesDepoisSlide({ slide, c1, revealCount, radius }) {
  * precisam concordar: se contassem diferente, sobraria clique "no vazio" ou faltaria clique e
  * algum item nunca apareceria.
  */
-function conteudoDoBloco(bloco) {
+function conteudoDoBloco(bloco, tituloComClique = false) {
   const formato = bloco.formato || 'topicos'
   const topicos = (bloco.itens || []).filter((t) => String(t || '').trim())
   const cards = (bloco.cards || []).filter((c) => String(c.titulo || '').trim() || String(c.texto || '').trim())
   const descricao = String(bloco.texto || '').trim()
   const fotos = bloco.imagens || []
+  // o título do lado direito também é um clique (o primeiro do lado direito): senão ele já
+  // aparecia ao abrir o slide, antes de a pessoa terminar de mostrar o lado esquerdo
+  const passosTitulo = tituloComClique && String(bloco.titulo || '').trim() ? 1 : 0
   const passosTexto = formato === 'topicos' ? topicos.length : formato === 'cards' ? cards.length : formato === 'descricao' && descricao ? 1 : 0
-  return { formato, topicos, cards, descricao, fotos, passosTexto, passos: passosTexto + fotos.length }
+  return { formato, topicos, cards, descricao, fotos, passosTitulo, passosTexto, passos: passosTitulo + passosTexto + fotos.length }
 }
 
 /** Blocos que aparecem no slide livre: um na página inteira, dois na dividida. */
@@ -3972,7 +3976,7 @@ function SlideLivre({ slide, c1, radius, revealCount }) {
     return (
       <div className="w-full h-full grid grid-cols-2">
         <BlocoLivre bloco={blocoA} cores={coresA} c1={c1} radius={radius} metade revealCount={revealCount} inicio={0} />
-        <BlocoLivre bloco={blocos[1]} cores={coresB} c1={c1} radius={radius} metade revealCount={revealCount} inicio={inicioB} />
+        <BlocoLivre bloco={blocos[1]} cores={coresB} c1={c1} radius={radius} metade revealCount={revealCount} inicio={inicioB} tituloComClique />
       </div>
     )
   }
@@ -3984,10 +3988,12 @@ const ALINHAR_V = { top: 'flex-start', center: 'center', bottom: 'flex-end' }
 
 /** Um bloco do slide livre. O título aparece já ao abrir; cada tópico, card (ou a descrição) e
  *  cada foto entra com um clique, contando a partir de "inicio". */
-function BlocoLivre({ bloco, cores, c1, radius, metade = false, revealCount = 999, inicio = 0 }) {
+function BlocoLivre({ bloco, cores, c1, radius, metade = false, revealCount = 999, inicio = 0, tituloComClique = false }) {
   const h = bloco.alinhH || 'left'
   const v = bloco.alinhV || 'center'
-  const { formato, topicos, cards, descricao, fotos, passosTexto } = conteudoDoBloco(bloco)
+  const { formato, topicos, cards, descricao, fotos, passosTitulo, passosTexto } = conteudoDoBloco(bloco, tituloComClique)
+  // os textos começam depois do título, quando o título também é um clique
+  const inicioTexto = inicio + passosTitulo
   const temTexto = passosTexto > 0
   const colunasCards = Number(bloco.cardsPorLinha) > 0 ? Number(bloco.cardsPorLinha) : Math.min(cards.length, metade ? 2 : 3)
   const corDoCard = cores.heading === '#FFFFFF' ? 'rgba(255,255,255,0.1)' : '#FFFFFF'
@@ -4000,16 +4006,20 @@ function BlocoLivre({ bloco, cores, c1, radius, metade = false, revealCount = 99
       className="w-full h-full min-h-0 p-16 flex flex-col overflow-hidden"
       style={{ background: cores.bg, justifyContent: fotos.length ? 'flex-start' : ALINHAR_V[v], alignItems: ALINHAR_H[h], textAlign: h }}
     >
-      {String(bloco.titulo || '').trim() && (
+      {String(bloco.titulo || '').trim() && (passosTitulo ? (
+        <Reveal i={inicio} revealCount={revealCount} className="shrink-0">
+          <h2 className="text-4xl mb-6" style={{ ...titleStyle, color: cores.titleColor }}>{bloco.titulo}</h2>
+        </Reveal>
+      ) : (
         <h2 className="text-4xl mb-6 shrink-0" style={{ ...titleStyle, color: cores.titleColor }}>{bloco.titulo}</h2>
-      )}
+      ))}
 
       {formato === 'topicos' && topicos.length > 0 && (
         <div className="space-y-3 shrink-0" style={{ maxWidth: larguraTexto }}>
           {topicos.map((t, i) => (
             // Reveal por fora e a opacidade do texto por dentro: a animação controla a opacidade
             // do Reveal, e uma opacidade escrita nele mesmo impediria o tópico de ficar escondido
-            <Reveal key={i} i={inicio + i} revealCount={revealCount}>
+            <Reveal key={i} i={inicioTexto + i} revealCount={revealCount}>
               <div className="flex items-start gap-3 text-xl" style={{ justifyContent: ALINHAR_H[h], color: cores.heading, opacity: 0.85 }}>
                 <span style={{ color: c1 }}>●</span><span>{t}</span>
               </div>
@@ -4020,7 +4030,7 @@ function BlocoLivre({ bloco, cores, c1, radius, metade = false, revealCount = 99
 
       {formato === 'descricao' && descricao && (
         // "descrição grande": maior que um tópico, e ainda acompanha o controle de tamanho do texto
-        <Reveal i={inicio} revealCount={revealCount} className="shrink-0" style={{ maxWidth: larguraTexto }}>
+        <Reveal i={inicioTexto} revealCount={revealCount} className="shrink-0" style={{ maxWidth: larguraTexto }}>
           <p className="whitespace-pre-line" style={{ color: cores.heading, opacity: 0.85, fontSize: 'calc(1.6rem * var(--esc-texto))', lineHeight: 1.45 }}>{descricao}</p>
         </Reveal>
       )}
@@ -4028,7 +4038,7 @@ function BlocoLivre({ bloco, cores, c1, radius, metade = false, revealCount = 99
       {formato === 'cards' && cards.length > 0 && (
         <div className="grid gap-4 shrink-0 w-full" style={{ gridTemplateColumns: `repeat(${colunasCards}, minmax(0, 1fr))` }}>
           {cards.map((c, i) => (
-            <Reveal key={i} i={inicio + i} revealCount={revealCount} className="p-6" style={{ borderRadius: radius, background: corDoCard, border: corDoCard === '#FFFFFF' ? '1px solid #E4DFD6' : 'none' }}>
+            <Reveal key={i} i={inicioTexto + i} revealCount={revealCount} className="p-6" style={{ borderRadius: radius, background: corDoCard, border: corDoCard === '#FFFFFF' ? '1px solid #E4DFD6' : 'none' }}>
               {String(c.titulo || '').trim() && <div className="text-lg font-semibold mb-2" style={{ color: c1 }}>{c.titulo}</div>}
               {String(c.texto || '').trim() && <div className="text-base whitespace-pre-line" style={{ color: corDoCard === '#FFFFFF' ? '#28313C' : cores.heading, opacity: 0.85 }}>{c.texto}</div>}
             </Reveal>
@@ -4040,7 +4050,7 @@ function BlocoLivre({ bloco, cores, c1, radius, metade = false, revealCount = 99
         <div className={`flex-1 min-h-0 w-full self-stretch ${String(bloco.titulo || '').trim() || temTexto ? 'mt-8' : ''}`}>
           <ImageStrip
             // as fotos vêm depois dos textos deste bloco: a 1ª foto é o clique seguinte ao último texto
-            imgs={fotos} layout="row" revealCount={revealCount - inicio - passosTexto} radius={radius}
+            imgs={fotos} layout="row" revealCount={revealCount - inicioTexto - passosTexto} radius={radius}
             perRow={fotos.length > 3 ? Math.ceil(fotos.length / 2) : fotos.length}
             alinhar={h === 'center' ? 'center' : h === 'right' ? 'end' : 'start'}
           />
