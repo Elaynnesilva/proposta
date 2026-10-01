@@ -578,6 +578,21 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
     setRevealCount(999)
   }
 
+  /**
+   * Nome do slide na lista lateral, escolhido pela pessoa. É só um apelido para se achar na
+   * lista: não muda o título que aparece dentro do slide. Fica guardado nesta proposta.
+   * Nome vazio volta ao nome automático (o título do slide).
+   */
+  function renomearSlide(slideId, nome) {
+    updateProposal((prev) => {
+      const nomes = { ...(prev.slideNames || {}) }
+      const limpo = String(nome || '').trim()
+      if (limpo) nomes[slideId] = limpo
+      else delete nomes[slideId]
+      return { ...prev, slideNames: nomes }
+    })
+  }
+
   function reorder(fromIdx, toIdx) {
     updateProposal((prev) => {
       const ids = slides.map((s) => s.id)
@@ -1111,6 +1126,8 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
                   onJump={jumpToId}
                   onToggleHidden={isPublic ? null : toggleHidden}
                   onReorder={isPublic ? null : reorder}
+                  nomes={proposal?.slideNames}
+                  onRename={isPublic || !podeEditar ? null : renomearSlide}
                 />
               )}
             </div>
@@ -1128,6 +1145,8 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
             onJump={jumpToId}
             onToggleHidden={isPublic ? null : toggleHidden}
             onReorder={isPublic ? null : reorder}
+            nomes={proposal?.slideNames}
+            onRename={isPublic || !podeEditar ? null : renomearSlide}
             onClose={() => setSidebarOpen(false)}
           />
         )}
@@ -1359,9 +1378,22 @@ const RATIO_NUM = { '1:1': 1, '4:5': 0.8, '5:4': 1.25, '9:16': 9 / 16, '16:9': 1
 
 /* ---------------- BARRA LATERAL DE SLIDES ---------------- */
 
-function SlideSidebar({ slides, currentId, hiddenIds, onJump, onToggleHidden, onReorder, onClose, embedded = false }) {
+function SlideSidebar({ slides, currentId, hiddenIds, onJump, onToggleHidden, onReorder, onClose, nomes = {}, onRename, embedded = false }) {
   const dragFrom = useRef(null)
   const canManage = !!onReorder
+  // slide sendo renomeado agora (só um por vez) e o texto digitado até confirmar
+  const [renomeando, setRenomeando] = useState(null)
+  const [nomeDigitado, setNomeDigitado] = useState('')
+  const nomeDe = (s) => nomes?.[s.id] || s.title || slideFallbackLabel(s)
+  function comecarRenomear(s) {
+    if (!onRename) return
+    setRenomeando(s.id)
+    setNomeDigitado(nomeDe(s))
+  }
+  function confirmarRenomear() {
+    if (renomeando) onRename(renomeando, nomeDigitado)
+    setRenomeando(null)
+  }
 
   return (
     <div className={embedded ? 'w-full h-full bg-[#1c232b] flex flex-col' : 'w-56 shrink-0 bg-[#1c232b] border-r border-white/10 flex flex-col'}>
@@ -1377,21 +1409,50 @@ function SlideSidebar({ slides, currentId, hiddenIds, onJump, onToggleHidden, on
           return (
             <div
               key={s.id}
-              draggable={canManage}
+              // enquanto renomeia, a linha não pode ser arrastada: senão selecionar o texto com o
+              // mouse viraria um "arrastar slide"
+              draggable={canManage && renomeando !== s.id}
               onDragStart={() => (dragFrom.current = i)}
               onDragOver={(e) => canManage && e.preventDefault()}
               onDrop={() => { if (canManage && dragFrom.current !== null && dragFrom.current !== i) onReorder(dragFrom.current, i); dragFrom.current = null }}
-              className={`mx-2 mb-1 px-2.5 py-2 rounded-lg flex items-center gap-2 text-xs transition ${s.id === currentId ? 'bg-white/15 text-white' : hidden ? 'text-white/30' : 'text-white/60 hover:bg-white/5'}`}
-              title={canManage ? 'Arraste para reordenar' : undefined}
+              className={`group mx-2 mb-1 px-2.5 py-2 rounded-lg flex items-center gap-2 text-xs transition ${s.id === currentId ? 'bg-white/15 text-white' : hidden ? 'text-white/30' : 'text-white/60 hover:bg-white/5'}`}
+              title={canManage && renomeando !== s.id ? (onRename ? 'Arraste para reordenar · dois cliques para renomear' : 'Arraste para reordenar') : undefined}
             >
               <span className="text-white/30 text-[10px] w-4 text-center shrink-0">{i + 1}</span>
-              <span
-                onClick={() => !hidden && onJump(s.id)}
-                className={`flex-1 flex items-center gap-2 min-w-0 ${hidden ? 'cursor-default' : 'cursor-pointer'}`}
-              >
-                <span>{SLIDE_ICONS[s.type] || '•'}</span>
-                <span className="truncate">{s.title || slideFallbackLabel(s)}</span>
-              </span>
+              {renomeando === s.id ? (
+                <input
+                  autoFocus
+                  value={nomeDigitado}
+                  onChange={(e) => setNomeDigitado(e.target.value)}
+                  onKeyDown={(e) => {
+                    e.stopPropagation()
+                    if (e.key === 'Enter') confirmarRenomear()
+                    if (e.key === 'Escape') setRenomeando(null)
+                  }}
+                  onBlur={confirmarRenomear}
+                  onFocus={(e) => e.target.select()}
+                  placeholder="Vazio = nome automático"
+                  className="flex-1 min-w-0 bg-white text-ink text-xs px-2 py-1 rounded outline-none"
+                />
+              ) : (
+                <span
+                  onClick={() => !hidden && onJump(s.id)}
+                  onDoubleClick={() => comecarRenomear(s)}
+                  className={`flex-1 flex items-center gap-2 min-w-0 ${hidden ? 'cursor-default' : 'cursor-pointer'}`}
+                >
+                  <span>{SLIDE_ICONS[s.type] || '•'}</span>
+                  <span className="truncate">{nomeDe(s)}</span>
+                </span>
+              )}
+              {onRename && renomeando !== s.id && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); comecarRenomear(s) }}
+                  // no computador o lápis só aparece com o mouse em cima da linha (lista mais limpa);
+                  // no celular não existe "mouse em cima", então ele fica sempre visível
+                  className={`shrink-0 text-white/40 hover:text-white text-xs transition ${embedded ? '' : 'opacity-0 group-hover:opacity-100'}`}
+                  title="Renomear na lista"
+                >✎</button>
+              )}
               {onToggleHidden && (
                 <button
                   onClick={(e) => { e.stopPropagation(); onToggleHidden(s.id) }}

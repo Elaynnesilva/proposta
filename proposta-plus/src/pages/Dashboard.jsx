@@ -452,6 +452,7 @@ function isUntouchedDraft(p) {
   if (nome && nome !== 'Nova proposta') return false
   if ((p.tipologia || 'residencial') !== 'residencial') return false
   if (p.customSlides?.length || p.slideOrder?.length || p.hiddenSlides?.length) return false
+  if (p.slideNames && Object.keys(p.slideNames).length) return false
   if (p.slideOverrides && Object.keys(p.slideOverrides).length) return false
   if (p.videoUrl || p.videoEmbedUrl || p.public) return false
   if (p.acceptedValue != null || p.acceptedPackageId) return false
