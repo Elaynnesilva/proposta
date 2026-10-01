@@ -7,7 +7,7 @@ import { auth } from '../lib/firebase'
 import { buildSlides } from '../lib/slides'
 import { DEFAULT_IMAGES, DEFAULT_SHARED_TEXT } from '../lib/content'
 import { STYLE, paletteToCssVars, readableTextColor, isLowContrast, DEFAULT_PALETTE, FIXED_SWATCHES } from '../lib/templates'
-import { toEmbedUrl } from '../lib/fields'
+import { toEmbedUrl, listItems } from '../lib/fields'
 
 const SLIDE_ICONS = {
   cover: '🏠', agenda: '📋', profile: '👩‍🎨', divider: '—', clientRequest: '🗂️',
@@ -511,6 +511,24 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
   }, [visibleSlides.length])
 
   const slide = visibleSlides[index]
+
+  /**
+   * Prévia ao vivo da edição: enquanto o painel está aberto, ele manda aqui o que está sendo
+   * editado e a tela desenha o slide já com isso — sem salvar. Só vale para o slide que está
+   * sendo editado; ao salvar ou fechar o painel, a prévia some e fica o que foi gravado.
+   */
+  const [previa, setPrevia] = useState(null)
+  useEffect(() => { if (!editing) setPrevia(null) }, [editing])
+  const slideNaTela = editing && slide && previa?.slideId === slide.id ? { ...slide, ...previa.patch } : slide
+
+  /** Fecha o painel. Se a pessoa mexeu e não salvou, confirma antes: agora que a mudança já
+   *  aparece no slide, fechar sem salvar podia dar a impressão de que ela tinha ficado gravada. */
+  function fecharEdicao(salvou) {
+    if (salvou !== true && previa?.alterado && !confirm('Fechar sem salvar? O que você mudou neste slide será descartado.')) return
+    setEditing(false)
+    setPrevia(null)
+  }
+
   const palette = proposal?.palette || DEFAULT_PALETTE
   const [c1, c2, c3] = palette
   const cssVars = paletteToCssVars(palette)
@@ -574,6 +592,8 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
   function jumpToId(slideId) {
     const idx = visibleSlides.findIndex((s) => s.id === slideId)
     if (idx < 0) return
+    // trocar de slide com o painel aberto descarta o que não foi salvo — pergunta antes
+    if (editing && slideId !== slide?.id && previa?.alterado && !confirm('Trocar de slide sem salvar? O que você mudou neste slide será descartado.')) return
     setIndex(idx)
     setRevealCount(999)
   }
@@ -1057,7 +1077,7 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
           style={isFullscreen ? {} : { height: '38vh', minHeight: 220 }}
         >
           <ScaledCanvas onClick={handleAdvance} onSwipeNext={handleAdvance} onSwipePrev={goPrev}>
-            <SlideView slide={slide} c1={c1} c2={c2} c3={c3} revealCount={revealCount} settings={settings} />
+            <SlideView slide={slideNaTela} c1={c1} c2={c2} c3={c3} revealCount={revealCount} settings={settings} />
           </ScaledCanvas>
           <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5 pointer-events-none">
             {visibleSlides.map((s, i) => (
@@ -1082,7 +1102,7 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
                 <button onClick={() => navigate(`/proposta/${id}/editar`)} className="text-xs bg-white/10 px-3 py-1.5 rounded-full shrink-0">← Sair</button>
               )}
               {!isPublic && podeEditar && (
-                <button onClick={() => setEditing((v) => !v)} className="text-xs px-3 py-1.5 rounded-full shrink-0 transition" style={{ background: editing ? c1 : 'rgba(255,255,255,.1)' }}>✎ {editing ? 'Fechar edição' : 'Editar slide'}</button>
+                <button onClick={() => (editing ? fecharEdicao() : setEditing(true))} className="text-xs px-3 py-1.5 rounded-full shrink-0 transition" style={{ background: editing ? c1 : 'rgba(255,255,255,.1)' }}>✎ {editing ? 'Fechar edição' : 'Editar slide'}</button>
               )}
               {!isPublic && (
                 <button onClick={handleCopyLink} className="text-xs bg-white/10 px-3 py-1.5 rounded-full shrink-0">🔗 {linkCopied ? 'Copiado ✓' : 'Link'}</button>
@@ -1105,6 +1125,7 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
             <div className="flex-1 min-h-0 overflow-y-auto bg-[#1c232b]">
               {editing && slide ? (
                 <EditPanel
+                  key={slide.id}
                   embedded
                   slide={slide}
                   palette={palette}
@@ -1115,7 +1136,8 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
                   onSaveFields={saveFieldsPatch}
                   onSaveVisibility={saveVisibilityPatch}
                   onDeleteSlide={excluirSlideExtra}
-                  onClose={() => setEditing(false)}
+                  onClose={fecharEdicao}
+                  onPreview={setPrevia}
                 />
               ) : (
                 <SlideSidebar
@@ -1153,7 +1175,7 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
 
         <div className="relative flex-1 min-w-0 overflow-hidden">
           <ScaledCanvas onClick={handleAdvance} onSwipeNext={handleAdvance} onSwipePrev={goPrev}>
-            <SlideView slide={slide} c1={c1} c2={c2} c3={c3} revealCount={revealCount} settings={settings} />
+            <SlideView slide={slideNaTela} c1={c1} c2={c2} c3={c3} revealCount={revealCount} settings={settings} />
           </ScaledCanvas>
 
           {apresentando && (
@@ -1196,7 +1218,7 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
               {!isPublic && (
                 <>
                   {podeEditar && (
-                    <button onClick={(e) => { e.stopPropagation(); setEditing((v) => !v) }} className="text-xs bg-black/30 hover:bg-black/50 backdrop-blur px-2.5 sm:px-3 py-1.5 rounded-full transition shrink-0">✎<span className="hidden sm:inline"> {editing ? 'Fechar edição' : 'Editar slide'}</span></button>
+                    <button onClick={(e) => { e.stopPropagation(); if (editing) fecharEdicao(); else setEditing(true) }} className="text-xs bg-black/30 hover:bg-black/50 backdrop-blur px-2.5 sm:px-3 py-1.5 rounded-full transition shrink-0">✎<span className="hidden sm:inline"> {editing ? 'Fechar edição' : 'Editar slide'}</span></button>
                   )}
                   <button onClick={(e) => { e.stopPropagation(); handleCopyLink() }} className="text-xs bg-black/30 hover:bg-black/50 backdrop-blur px-2.5 sm:px-3 py-1.5 rounded-full transition shrink-0">
                     🔗<span className="hidden sm:inline"> {linkCopied ? 'Link copiado ✓' : 'Link para o cliente'}</span>
@@ -1238,6 +1260,7 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
 
           {editing && slide && !apresentando && (
             <EditPanel
+              key={slide.id}
               slide={slide}
               palette={palette}
               proposal={proposal}
@@ -1247,7 +1270,8 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
               onSaveFields={saveFieldsPatch}
               onSaveVisibility={saveVisibilityPatch}
               onDeleteSlide={excluirSlideExtra}
-              onClose={() => setEditing(false)}
+              onClose={fecharEdicao}
+              onPreview={setPrevia}
             />
           )}
         </div>
@@ -1846,7 +1870,7 @@ function normalizeStepImages(list) {
   return (list || []).map((v) => (typeof v === 'string' ? { url: v } : (v || {})))
 }
 
-function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALETTE, proposal, onSaveVideoScope, onSaveFields, onSaveVisibility, onDeleteSlide, embedded = false }) {
+function EditPanel({ slide, allowGlobal, onSave, onClose, onPreview, palette = DEFAULT_PALETTE, proposal, onSaveVideoScope, onSaveFields, onSaveVisibility, onDeleteSlide, embedded = false }) {
   // slides de material de apresentação já nascem com "todas as propostas, de todos os tipos"
   // selecionado: é o comportamento pedido — o que se coloca aqui deve valer para as próximas
   // propostas também, sem precisar refazer. Slides de um cliente específico continuam
@@ -1948,55 +1972,10 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
   }
   const [videoScope, setVideoScope] = useState(() => lerEscopoSalvo(VIDEO_SCOPE_KEY, 'proposal'))
 
-  useEffect(() => {
-    setScope(allowGlobal ? lerEscopoSalvo(SCOPE_KEY, 'allTypes') : 'proposal')
-    setTitle(slide.title || slide.headline || '')
-    setItems(Array.isArray(slide.items) && typeof slide.items[0] !== 'object' ? [...slide.items] : null)
-    setQuote(slide.quote || '')
-    setAuthor(slide.author || '')
-    setSubtitle(slide.subtitle || '')
-    setDescription(slide.description || '')
-    setBgColor(slide.bgColor || '')
-    setTextColor(slide.textColor || '')
-    setStepImages(normalizeStepImages(slide.stepImages))
-    setImages(effectiveImages(slide))
-    setImageLayout(slide.imageLayout || 'row')
-    setImagePlacement(slide.imagePlacement || 'below')
-    setImagesPerRow(slide.imagesPerRow || '')
-    setEmbedUrl(slide.embedUrl || '')
-    setAdjustingIdx(null)
-    setSingleImage({ url: slide.image || '', posX: slide.imagePosX, posY: slide.imagePosY })
-    setNoImage(!!slide.noImage)
-    setImagePosition(slide.imagePosition || 'left')
-    setKicker(slide.kicker || '')
-    setTitleScale(Number(slide.titleScale) || 100)
-    setTextScale(Number(slide.textScale) || 100)
-    setCoverImage({ url: slide.image || '', posX: slide.imagePosX, posY: slide.imagePosY })
-    setObjetivoProjeto(slide.objetivoProjeto || '')
-    setPackageBenefitsText((slide.benefits || []).join('\n'))
-    setPackageBonusText((slide.bonus || []).join('\n'))
-    setHidePayments(!!slide.hidePayments)
-    setHideDescriptions(!!slide.hideDescriptions)
-    setPackageExtras((slide.packages || []).reduce((acc, pkg) => {
-      acc[pkg.id] = { ...(slide.packageExtras?.[pkg.id] || {}) }
-      return acc
-    }, {}))
-    setPackageBenefits((slide.packages || []).reduce((acc, pkg) => {
-      acc[pkg.id] = (pkg.benefits || []).join('\n')
-      return acc
-    }, {}))
-    setStages(slide.stages ? JSON.parse(JSON.stringify(slide.stages)) : [])
-    setFootnote(slide.footnote || '')
-    setReasonsList(slide.type === 'reasons' && Array.isArray(slide.items) ? JSON.parse(JSON.stringify(slide.items)) : [])
-    setFeedbacks(slide.type === 'feedbacks' && Array.isArray(slide.items) ? JSON.parse(JSON.stringify(slide.items)) : [])
-    setFeedbackLayout(slide.feedbackLayout || 'grade')
-    setSideImages(JSON.parse(JSON.stringify(slide.sideImages || [])))
-    setAntesDepois(lerAntesDepois(slide))
-    setBgColor2(slide.bgColor2 || '')
-    setTextColor2(slide.textColor2 || '')
-    setLayoutMode(slide.layoutMode || '')
-    setBlocos(JSON.parse(JSON.stringify(slide.blocos || [{}, {}])))
-  }, [slide.id])
+  // trocar de slide com o painel aberto recria o painel do zero (o Presenter passa key={slide.id}),
+  // então cada campo já nasce com os valores do slide novo. Antes havia aqui um "recomeço" que
+  // copiava campo por campo; com a prévia ao vivo, ele fazia o painel parecer "alterado" sem a
+  // pessoa ter mexido em nada.
 
   function addImages(fileList) {
     const files = Array.from(fileList || [])
@@ -2014,46 +1993,44 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
    */
   function save() { setScopePopup(true) }
 
-  function aplicarSalvamento(escopoEscolhido) {
-    setScopePopup(false)
-    if (isVideo) {
-      guardarEscopo(VIDEO_SCOPE_KEY, escopoEscolhido)
-      onSaveVideoScope?.(escopoEscolhido, { videoUrl: '', videoPath: '', embedUrl: toEmbedUrl(embedUrl) })
-      onClose()
-      return
-    }
-
+  /**
+   * Junta tudo o que está no painel em duas partes: "patch" (o que é do slide, salvo no escopo
+   * escolhido) e "campos" (o que mora em Dados do projeto). Não grava nada — quem grava é o
+   * aplicarSalvamento. A prévia ao vivo usa esta mesma montagem, então o que aparece no slide
+   * enquanto se edita é exatamente o que vai ser salvo.
+   */
+  function montarEdicao() {
+    const campos = {}
     const patch = slide.type === 'closing' ? { title, quote, author } : { title }
     patch.titleScale = titleScale
     patch.textScale = textScale
     // tópicos que vêm de "Dados do projeto" voltam para lá (só desta proposta), em vez de
     // virarem uma cópia no slide — assim o slide e os dados nunca mais ficam diferentes
-    if (items && slide.fieldCode) onSaveFields?.({ [slide.fieldCode]: items.join('\n') })
+    if (items && slide.fieldCode) campos[slide.fieldCode] = items.join('\n')
     else if (items && !livre) patch.items = items
     if (slide.type === 'divider') { patch.subtitle = subtitle }
     if (slide.type === 'journeyFlow') { patch.subtitle = subtitle }
-    if (isClientRequest) { onSaveFields?.({ objetivoProjeto }) }
+    if (isClientRequest) { campos.objetivoProjeto = objetivoProjeto }
     // mesmo campo "Benefícios do pacote" usado no card deste pacote no Resumo dos pacotes —
     // editar num lugar atualiza o outro, porque os dois leem do mesmo campo da planilha
     if (isPackagePricing) {
       const pkgCap = `${slide.packageId.charAt(0).toUpperCase()}${slide.packageId.slice(1)}`
-      onSaveFields?.({ [`beneficios${pkgCap}`]: packageBenefitsText, [`bonus${pkgCap}`]: packageBonusText })
+      campos[`beneficios${pkgCap}`] = packageBenefitsText
+      campos[`bonus${pkgCap}`] = packageBonusText
     }
     // a página de "Acompanhamento de obra" busca a descrição direto de "Dados do projeto"
     // (campo Descrição do acompanhamento de obra) — editar aqui atualiza esse campo, então
     // não fica um texto "preso" só nesta proposta, desalinhado do resto dos dados
-    if (slide.id === 'obra') { onSaveFields?.({ acompanhamentoObraDescricao: description }) }
+    if (slide.id === 'obra') { campos.acompanhamentoObraDescricao = description }
     if (isPackagesSummary) {
       patch.packageExtras = packageExtras
       patch.hidePayments = hidePayments
       patch.hideDescriptions = hideDescriptions
       // os tópicos editados aqui são os mesmos campos "Benefícios do pacote" usados nos
       // cards de cada pacote — salvar aqui atualiza os dois lugares de uma vez
-      const beneficiosPatch = {}
       Object.entries(packageBenefits).forEach(([pkgId, text]) => {
-        beneficiosPatch[`beneficios${pkgId.charAt(0).toUpperCase()}${pkgId.slice(1)}`] = text
+        campos[`beneficios${pkgId.charAt(0).toUpperCase()}${pkgId.slice(1)}`] = text
       })
-      onSaveFields?.(beneficiosPatch)
     }
     if (isStages) {
       // as datas em si moram em "Dados do projeto" e são remontadas a cada proposta — aqui só
@@ -2097,10 +2074,60 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
     if (isCover) Object.assign(patch, { kicker, image: coverImage.url || '', imagePosX: coverImage.posX ?? 50, imagePosY: coverImage.posY ?? 50 })
     if (slide.type === 'journeyFlow') patch.stepImages = stepImages
     if (COLOR_CUSTOMIZABLE_TYPES.has(slide.type)) Object.assign(patch, { bgColor, textColor })
+    return { patch, campos }
+  }
 
+  /**
+   * O que a tela desenha enquanto se edita: a mesma montagem do Salvar, mais o que no slide
+   * vem de Dados do projeto (benefícios, objetivo, tópicos do escopo…). Essa parte é gravada nos
+   * dados, e não no slide, então para aparecer na hora precisa ser aplicada aqui também.
+   */
+  function montarPrevia() {
+    if (isVideo) return { embedUrl: toEmbedUrl(embedUrl) }
+    const { patch } = montarEdicao()
+    const previa = { ...patch }
+    if (items && slide.fieldCode) previa.items = items
+    if (isClientRequest) previa.objetivoProjeto = objetivoProjeto
+    if (isPackagePricing) { previa.benefits = listItems(packageBenefitsText); previa.bonus = listItems(packageBonusText) }
+    if (slide.id === 'obra') previa.description = description
+    if (isPackagesSummary) previa.packages = (slide.packages || []).map((p) => ({ ...p, benefits: listItems(packageBenefits[p.id] || '') }))
+    // as datas das apresentações não vão no salvamento (moram nos dados), mas precisam
+    // continuar na tela durante a edição
+    if (isStages) previa.stages = stages
+    return previa
+  }
+
+  /**
+   * Prévia ao vivo: a cada mudança no painel, o slide na tela é redesenhado com ela, sem salvar
+   * nada. Antes só dava para ver o resultado depois de salvar — e, para corrigir, era preciso
+   * abrir, salvar e conferir de novo. "alterado" diz se a pessoa já mexeu em algo (a primeira
+   * passada é só a abertura do painel), para avisar antes de fechar sem salvar.
+   */
+  const previaJaMontada = useRef(false)
+  useEffect(() => {
+    const alterado = previaJaMontada.current
+    previaJaMontada.current = true
+    onPreview?.({ slideId: slide.id, patch: montarPrevia(), alterado })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [title, quote, author, subtitle, description, bgColor, textColor, stepImages, stages, footnote, reasonsList, feedbacks,
+    feedbackLayout, sideImages, antesDepois, bgColor2, textColor2, layoutMode, blocos, images, imageLayout, imagePlacement,
+    imagesPerRow, kicker, coverImage, singleImage, noImage, imagePosition, objetivoProjeto, packageBenefitsText,
+    packageBonusText, hidePayments, hideDescriptions, packageExtras, packageBenefits, embedUrl, titleScale, textScale, items])
+
+  function aplicarSalvamento(escopoEscolhido) {
+    setScopePopup(false)
+    if (isVideo) {
+      guardarEscopo(VIDEO_SCOPE_KEY, escopoEscolhido)
+      onSaveVideoScope?.(escopoEscolhido, { videoUrl: '', videoPath: '', embedUrl: toEmbedUrl(embedUrl) })
+      onClose(true)
+      return
+    }
+    const { patch, campos } = montarEdicao()
+    if (Object.keys(campos).length) onSaveFields?.(campos)
     guardarEscopo(SCOPE_KEY, escopoEscolhido)
     onSave(patch, escopoEscolhido)
-    onClose()
+    // "true" = fechou porque salvou: não pergunta se quer descartar as alterações
+    onClose(true)
   }
 
   return (
