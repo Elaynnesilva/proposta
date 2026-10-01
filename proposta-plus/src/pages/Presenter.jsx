@@ -13,7 +13,20 @@ const SLIDE_ICONS = {
   cover: '🏠', agenda: '📋', profile: '👩‍🎨', divider: '—', clientRequest: '🗂️',
   reasons: '💡', scopeSection: '📐', modeling: '🧊', journeyFlow: '🧭', stages: '🎯',
   feedbacks: '💬', pricingCalc: '🧮', packagePricing: '💰', packagesSummary: '📊', payment: '💳', video: '🎬',
-  custom: '✨', closing: '❤️',
+  custom: '✨', closing: '❤️', beforeAfter: '🔁',
+}
+
+/**
+ * Slide "Antes e depois" sem nenhuma foto nem texto. Ele existe em toda proposta (é montado
+ * junto com os outros), mas vazio não deve chegar ao cliente: fica de fora do link público, do
+ * modo Apresentar e do PDF. Na tela de edição ele continua na lista, para poder ser preenchido.
+ * Conta-se a quantidade de fotos (e não se a foto já carregou), senão o slide "piscaria" sumindo
+ * enquanto as fotos ainda estão chegando do banco.
+ */
+function slideVazio(s) {
+  if (s.type !== 'beforeAfter') return false
+  const temTexto = [s.leftText, s.rightText].some((t) => String(t || '').trim())
+  return !temTexto && !(s.leftImages?.length) && !(s.rightImages?.length)
 }
 
 /**
@@ -435,7 +448,36 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
   // páginas ocultadas pela pessoa ficam fora da apresentação e do PDF, mas continuam
   // listadas (esmaecidas) na barra lateral, prontas para serem reativadas quando quiser
   const hiddenIds = useMemo(() => new Set(proposal?.hiddenSlides || []), [proposal?.hiddenSlides])
-  const visibleSlides = useMemo(() => slides.filter((s) => !hiddenIds.has(s.id)), [slides, hiddenIds])
+  // o que o cliente vê (link público e modo Apresentar) também pula os slides vazios — ver slideVazio
+  const modoCliente = apresentando || isPublic
+  const visibleSlides = useMemo(
+    () => slides.filter((s) => !hiddenIds.has(s.id) && !(modoCliente && slideVazio(s))),
+    [slides, hiddenIds, modoCliente],
+  )
+  // o PDF é sempre "para o cliente": slide vazio fica de fora mesmo baixando pela tela de edição.
+  // É uma lista própria (e não um filtro que liga durante a geração) para o número de páginas
+  // contado no começo da geração ser o mesmo das páginas desenhadas.
+  const slidesDoPdf = useMemo(() => visibleSlides.filter((s) => !slideVazio(s)), [visibleSlides])
+
+  /**
+   * Quando a lista muda (entrar/sair do modo Apresentar, ocultar ou reordenar um slide…), a
+   * apresentação continua no MESMO slide, procurando-o pelo nome interno. Antes ela ficava no
+   * mesmo NÚMERO, e o número passava a apontar para outro slide: entrar no modo Apresentar com
+   * um slide vazio antes do atual pulava a pessoa para o slide seguinte sem ela perceber.
+   */
+  const ultimoIdMostrado = useRef(null)
+  const ultimaListaVisivel = useRef(visibleSlides)
+  useEffect(() => {
+    if (ultimaListaVisivel.current !== visibleSlides) {
+      ultimaListaVisivel.current = visibleSlides
+      // slide recém-criado: quem decide para onde ir é o "pular para o slide novo", logo abaixo
+      if (!slideNovoId) {
+        const idx = visibleSlides.findIndex((s) => s.id === ultimoIdMostrado.current)
+        if (idx >= 0 && idx !== index) { setIndex(idx); return }
+      }
+    }
+    ultimoIdMostrado.current = visibleSlides[index]?.id
+  }, [visibleSlides, index, slideNovoId])
 
   /**
    * Pede as fotos do slide atual e do seguinte (a virada fica sem espera). Como as referências
@@ -850,9 +892,12 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
 
   /** Cria um slide extra já dentro da apresentação, pula pra ele e abre a edição. */
   function novoSlide() {
+    // nasce no formato livre: página inteira, tópicos à esquerda, centralizados na altura —
+    // a pessoa muda posição, formato do texto e divide a página no "Editar slide"
     const novo = {
       id: `custom-${Date.now().toString(36)}`,
-      title: 'Novo slide', items: [''], images: [], imageLayout: 'row', image: '', embedUrl: '',
+      title: 'Novo slide', layoutMode: 'inteiro',
+      blocos: [{ formato: 'topicos', itens: [''], alinhH: 'left', alinhV: 'center' }, { formato: 'topicos', itens: [''] }],
     }
     updateProposal((prev) => ({ ...prev, customSlides: [...(prev.customSlides || []), novo] }))
     setSlideNovoId(novo.id)
@@ -881,10 +926,10 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
       const { default: html2canvas } = await import('html2canvas')
       const { jsPDF } = await import('jspdf')
       let pdf = null
-      for (let i = 0; i < visibleSlides.length; i++) {
+      for (let i = 0; i < slidesDoPdf.length; i++) {
         setExportIndex(i)
         setExportProgress(i + 1)
-        onExportProgress?.(i + 1, visibleSlides.length)
+        onExportProgress?.(i + 1, slidesDoPdf.length)
         // dá um tempinho para a imagem daquele slide carregar antes de "fotografar"
         await new Promise((resolve) => setTimeout(resolve, 400))
         const node = exportRef.current
@@ -956,8 +1001,8 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
     return (
       <div style={{ position: 'fixed', left: -99999, top: 0, width: EXPORT_W, height: EXPORT_H, overflow: 'hidden' }}>
         <div ref={exportRef} className="pdf-export-mode" style={{ width: EXPORT_W, height: EXPORT_H }}>
-          {visibleSlides[exportIndex] && (
-            <SlideView slide={visibleSlides[exportIndex]} c1={c1} c2={c2} c3={c3} revealCount={999} settings={settings} exportMode />
+          {slidesDoPdf[exportIndex] && (
+            <SlideView slide={slidesDoPdf[exportIndex]} c1={c1} c2={c2} c3={c3} revealCount={999} settings={settings} exportMode />
           )}
         </div>
       </div>
@@ -1013,7 +1058,7 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
               {!isPublic && podeEditar && (
                 <button onClick={() => duplicarSlide(slide.id)} className="text-xs bg-white/10 px-3 py-1.5 rounded-full shrink-0">⧉ Duplicar</button>
               )}
-              <button disabled={exporting} onClick={handleExportPdf} className="text-xs bg-white/10 px-3 py-1.5 rounded-full shrink-0 disabled:opacity-50">⇩ {exporting ? `Gerando… ${exportProgress}/${visibleSlides.length}` : 'Baixar PDF'}</button>
+              <button disabled={exporting} onClick={handleExportPdf} className="text-xs bg-white/10 px-3 py-1.5 rounded-full shrink-0 disabled:opacity-50">⇩ {exporting ? `Gerando… ${exportProgress}/${slidesDoPdf.length}` : 'Baixar PDF'}</button>
               {!isPublic && (
                 <div className="flex items-center gap-1 shrink-0 ml-auto">
                   <button disabled={!historyRef.current.length} onClick={undo} className="text-xs bg-white/10 disabled:opacity-30 w-8 h-8 rounded-full flex items-center justify-center" title="Desfazer">↩</button>
@@ -1130,7 +1175,7 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
                 </>
               )}
               <button disabled={exporting} onClick={(e) => { e.stopPropagation(); handleExportPdf() }} className="text-xs bg-black/30 hover:bg-black/50 backdrop-blur px-2.5 sm:px-3 py-1.5 rounded-full transition disabled:opacity-50 shrink-0">
-                ⇩<span className="hidden sm:inline"> {exporting ? `Gerando PDF… ${exportProgress}/${visibleSlides.length}` : 'Baixar PDF'}</span>
+                ⇩<span className="hidden sm:inline"> {exporting ? `Gerando PDF… ${exportProgress}/${slidesDoPdf.length}` : 'Baixar PDF'}</span>
               </button>
               {!isPublic && (
                 <>
@@ -1193,8 +1238,8 @@ export default function Presenter({ proposalId, exportOnly = false, onExportProg
       {/* área invisível usada só para "fotografar" cada slide na hora de gerar o PDF */}
       <div style={{ position: 'fixed', left: -99999, top: 0, width: EXPORT_W, height: EXPORT_H, overflow: 'hidden' }}>
         <div ref={exportRef} className="pdf-export-mode" style={{ width: EXPORT_W, height: EXPORT_H }}>
-          {exporting && visibleSlides[exportIndex] && (
-            <SlideView slide={visibleSlides[exportIndex]} c1={c1} c2={c2} c3={c3} revealCount={999} settings={settings} exportMode />
+          {exporting && slidesDoPdf[exportIndex] && (
+            <SlideView slide={slidesDoPdf[exportIndex]} c1={c1} c2={c2} c3={c3} revealCount={999} settings={settings} exportMode />
           )}
         </div>
       </div>
@@ -1239,6 +1284,17 @@ function getItemsLength(slide) {
   // capa e "sobre mim" agora mostram os textos juntos, sem precisar clicar —
   // então um clique já avança pro próximo slide, sem etapas escondidas no meio
   if (slide.type === 'cover' || slide.type === 'profile') return 0
+  // antes e depois: o "Antes" já abre na tela e o "Depois" entra com um clique — é a revelação
+  // que dá graça a esse tipo de comparação. Sem nada do lado "Depois", não há o que revelar.
+  if (slide.type === 'beforeAfter') {
+    const temDepois = (slide.rightImages?.length || 0) > 0 || String(slide.rightText || '').trim()
+    return temDepois ? 1 : 0
+  }
+  // slide livre (o "Novo slide" com posição e formato escolhidos): tudo aparece junto, sem
+  // etapas escondidas — com blocos em dois lados, um clique por item ficaria confuso
+  if (slide.type === 'custom' && slide.layoutMode) return 0
+  // um feedback só, com fotos do projeto ao lado: aparece tudo junto, já ao abrir
+  if (slide.type === 'feedbacks' && slide.feedbackLayout === 'unico') return 0
   // nestes dois, o texto aparece todo de uma vez — quem controla o clique agora são as imagens
   if (slide.type === 'scopeSection' || slide.type === 'modeling') return contagemDeFotos(slide)
   // slide extra sem vídeo usa o mesmo desenho das seções de escopo: o texto aparece inteiro e
@@ -1405,7 +1461,154 @@ function ImagePositionPicker({ image, onChange }) {
   )
 }
 
-const COLOR_CUSTOMIZABLE_TYPES = new Set(['cover', 'divider', 'agenda', 'profile', 'clientRequest', 'reasons', 'scopeSection', 'scopeSplit', 'modeling', 'journeyFlow', 'stages', 'feedbacks', 'pricingCalc', 'packagePricing', 'packagesSummary', 'custom', 'closing'])
+const COLOR_CUSTOMIZABLE_TYPES = new Set(['cover', 'divider', 'agenda', 'profile', 'clientRequest', 'reasons', 'scopeSection', 'scopeSplit', 'modeling', 'journeyFlow', 'stages', 'feedbacks', 'pricingCalc', 'packagePricing', 'packagesSummary', 'custom', 'closing', 'beforeAfter'])
+
+/** formatos de foto oferecidos nas listas de fotos (mesmos usados no resto do sistema) */
+const RATIO_OPCOES = [
+  ['', 'Preencher o espaço'],
+  ['1:1', '1:1 — quadrado'],
+  ['4:5', '4:5 — retrato'],
+  ['5:4', '5:4 — paisagem'],
+  ['9:16', '9:16 — vertical'],
+  ['16:9', '16:9 — widescreen'],
+]
+
+/** Os campos do "Antes e depois" num objeto só, para o painel editar e salvar juntos. */
+function lerAntesDepois(slide) {
+  return {
+    leftTitle: slide.leftTitle ?? 'Antes',
+    leftText: slide.leftText || '',
+    leftImages: JSON.parse(JSON.stringify(slide.leftImages || [])),
+    rightTitle: slide.rightTitle ?? 'Depois',
+    rightText: slide.rightText || '',
+    rightImages: JSON.parse(JSON.stringify(slide.rightImages || [])),
+  }
+}
+
+/**
+ * Lista de fotos com limite (ex.: até 4), cada uma com trocar/remover, ajuste de enquadramento
+ * e formato. setFotos recebe uma função que devolve a nova lista — necessário porque várias
+ * fotos escolhidas de uma vez terminam de comprimir cada uma no seu tempo, e cada uma precisa
+ * entrar na lista mais atual, senão uma apagaria a outra.
+ */
+function ListaDeFotosEditor({ fotos, setFotos, max, onPickFile, formatoPadrao = '' }) {
+  return (
+    <div className="mb-2">
+      {fotos.map((f, i) => (
+        <div key={i} className="border border-line rounded-lg p-2 mb-2">
+          <SingleImageField
+            compact previewClass="w-full h-24"
+            value={f}
+            onChange={(next) => setFotos((prev) => (next.url
+              ? prev.map((x, k) => (k === i ? { ...x, ...next } : x))
+              : prev.filter((_, k) => k !== i)))}
+            onPickFile={onPickFile}
+          />
+          <select
+            value={f.ratio || ''}
+            onChange={(e) => { const ratio = e.target.value; setFotos((prev) => prev.map((x, k) => (k === i ? { ...x, ratio } : x))) }}
+            className="text-xs border border-line rounded px-2 py-1.5 w-full mt-2"
+          >
+            {RATIO_OPCOES.map(([v, rotulo]) => <option key={v} value={v}>{rotulo}</option>)}
+          </select>
+        </div>
+      ))}
+      {fotos.length < max && (
+        <label className="text-xs cursor-pointer text-clay font-medium block">
+          + adicionar foto ({fotos.length}/{max})
+          <input type="file" accept="image/*" multiple hidden onChange={(e) => {
+            const arquivos = Array.from(e.target.files || []).slice(0, max - fotos.length)
+            arquivos.forEach((file) => onPickFile(file, (url) => setFotos((prev) => (prev.length >= max ? prev : [...prev, { url, posX: 50, posY: 50, ratio: formatoPadrao }]))))
+            e.target.value = ''
+          }} />
+        </label>
+      )}
+    </div>
+  )
+}
+
+/** Botões de escolha (um ativo por vez), usados para formato da página, do texto e posição. */
+function Escolha({ opcoes, valor, onChange }) {
+  return (
+    <div className="flex gap-1.5 flex-wrap mb-3">
+      {opcoes.map(([v, rotulo]) => (
+        <button
+          key={v} type="button" onClick={() => onChange(v)}
+          className={`text-xs px-2.5 py-1.5 rounded-full border transition ${valor === v ? 'bg-ink text-white border-ink' : 'border-line hover:bg-sand'}`}
+        >{rotulo}</button>
+      ))}
+    </div>
+  )
+}
+
+/** Editor de um bloco do slide livre (página inteira, ou um dos lados da página dividida). */
+function EditorDeBloco({ rotulo, bloco, setBloco, mostrarTitulo, maxFotos, onPickFile }) {
+  const formato = bloco.formato || 'topicos'
+  const itens = bloco.itens || ['']
+  const cards = bloco.cards || [{ titulo: '', texto: '' }]
+  const campo = 'w-full text-sm p-2 rounded-lg border border-line outline-none focus:border-clay'
+  return (
+    <div className="border border-line rounded-lg p-3 mb-3">
+      {rotulo && <div className="text-sm font-medium mb-2">{rotulo}</div>}
+      {mostrarTitulo && (
+        <>
+          <label className="text-xs font-medium text-ink/70 block mb-1">Título</label>
+          <textarea value={bloco.titulo || ''} rows={2} onChange={(e) => { const titulo = e.target.value; setBloco((b) => ({ ...b, titulo })) }} className={`${campo} mb-3`} />
+        </>
+      )}
+
+      <label className="text-xs font-medium text-ink/70 block mb-1">Formato do texto</label>
+      <Escolha
+        valor={formato}
+        onChange={(v) => setBloco((b) => ({ ...b, formato: v }))}
+        opcoes={[['topicos', 'Tópicos'], ['descricao', 'Descrição grande'], ['cards', 'Cards'], ['nenhum', 'Sem texto']]}
+      />
+
+      {formato === 'topicos' && (
+        <div className="mb-3">
+          {itens.map((t, i) => (
+            <div key={i} className="flex gap-1.5 mb-1.5">
+              <input value={t} onChange={(e) => { const v = e.target.value; setBloco((b) => ({ ...b, itens: (b.itens || ['']).map((x, k) => (k === i ? v : x)) })) }} className={campo} placeholder={`Tópico ${i + 1}`} />
+              <button onClick={() => setBloco((b) => ({ ...b, itens: (b.itens || ['']).filter((_, k) => k !== i) }))} className="text-xs text-red-600 shrink-0">✕</button>
+            </div>
+          ))}
+          <button onClick={() => setBloco((b) => ({ ...b, itens: [...(b.itens || ['']), ''] }))} className="text-xs text-clay">+ tópico</button>
+        </div>
+      )}
+
+      {formato === 'descricao' && (
+        <textarea value={bloco.texto || ''} rows={5} onChange={(e) => { const texto = e.target.value; setBloco((b) => ({ ...b, texto })) }} className={`${campo} mb-3`} placeholder="Escreva o texto. Enter quebra a linha." />
+      )}
+
+      {formato === 'cards' && (
+        <div className="mb-3">
+          {cards.map((c, i) => (
+            <div key={i} className="border border-line rounded-lg p-2 mb-2">
+              <div className="flex gap-1.5 mb-1.5">
+                <input value={c.titulo || ''} onChange={(e) => { const v = e.target.value; setBloco((b) => ({ ...b, cards: (b.cards || [{}]).map((x, k) => (k === i ? { ...x, titulo: v } : x)) })) }} className={campo} placeholder="Título do card" />
+                <button onClick={() => setBloco((b) => ({ ...b, cards: (b.cards || [{}]).filter((_, k) => k !== i) }))} className="text-xs text-red-600 shrink-0">✕</button>
+              </div>
+              <textarea value={c.texto || ''} rows={2} onChange={(e) => { const v = e.target.value; setBloco((b) => ({ ...b, cards: (b.cards || [{}]).map((x, k) => (k === i ? { ...x, texto: v } : x)) })) }} className={campo} placeholder="Texto do card" />
+            </div>
+          ))}
+          <button onClick={() => setBloco((b) => ({ ...b, cards: [...(b.cards || [{ titulo: '', texto: '' }]), { titulo: '', texto: '' }] }))} className="text-xs text-clay">+ card</button>
+        </div>
+      )}
+
+      <label className="text-xs font-medium text-ink/70 block mb-1">Fotos (opcional, até {maxFotos})</label>
+      <ListaDeFotosEditor
+        fotos={bloco.imagens || []}
+        setFotos={(upd) => setBloco((b) => ({ ...b, imagens: upd(b.imagens || []) }))}
+        max={maxFotos} onPickFile={onPickFile}
+      />
+
+      <label className="text-xs font-medium text-ink/70 block mb-1 mt-2">Posição do texto</label>
+      <Escolha valor={bloco.alinhH || 'left'} onChange={(v) => setBloco((b) => ({ ...b, alinhH: v }))} opcoes={[['left', '⇤ Esquerda'], ['center', 'Centro'], ['right', 'Direita ⇥']]} />
+      <Escolha valor={bloco.alinhV || 'center'} onChange={(v) => setBloco((b) => ({ ...b, alinhV: v }))} opcoes={[['top', '⤒ Topo'], ['center', 'Meio'], ['bottom', 'Embaixo ⤓']]} />
+      {(bloco.imagens || []).length > 0 && <p className="text-[11px] text-muted">Com fotos, o texto fica no topo e as fotos ocupam o espaço abaixo dele.</p>}
+    </div>
+  )
+}
 
 /**
  * Campo de UMA imagem, com pré-visualização, trocar, remover e \"ajustar\" (enquadramento).
@@ -1581,10 +1784,23 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
   const [reasonsList, setReasonsList] = useState(() => (isReasons && Array.isArray(slide.items) ? JSON.parse(JSON.stringify(slide.items)) : []))
   const isFeedbacks = slide.type === 'feedbacks'
   const [feedbacks, setFeedbacks] = useState(() => (isFeedbacks && Array.isArray(slide.items) ? JSON.parse(JSON.stringify(slide.items)) : []))
+  // feedbacks: "grade" (vários lado a lado) ou "unico" (um feedback + até 2 fotos do projeto ao lado)
+  const [feedbackLayout, setFeedbackLayout] = useState(slide.feedbackLayout || 'grade')
+  const [sideImages, setSideImages] = useState(() => JSON.parse(JSON.stringify(slide.sideImages || [])))
+  // antes e depois: título, texto e fotos de cada lado, e as cores do lado direito
+  const isBeforeAfter = slide.type === 'beforeAfter'
+  const [antesDepois, setAntesDepois] = useState(() => lerAntesDepois(slide))
+  const [bgColor2, setBgColor2] = useState(slide.bgColor2 || '')
+  const [textColor2, setTextColor2] = useState(slide.textColor2 || '')
+  // slide livre: página inteira ou dividida, com um bloco de conteúdo por parte. Fica em estado
+  // (e não lido direto do slide) porque um slide extra antigo pode ser convertido aqui mesmo.
+  const [layoutMode, setLayoutMode] = useState(slide.layoutMode || '')
+  const [blocos, setBlocos] = useState(() => JSON.parse(JSON.stringify(slide.blocos || [{}, {}])))
   // o slide extra sem vídeo usa o mesmo desenho das seções de escopo, então também ganha a
   // lista de várias fotos (e o "não usar imagem" de verdade)
   const isCustomSemVideo = slide.type === 'custom' && !slide.embedUrl && !slide.videoUrl
-  const isMultiImage = slide.type === 'scopeSection' || slide.type === 'modeling' || isCustomSemVideo
+  const livre = isCustomSemVideo && !!layoutMode
+  const isMultiImage = slide.type === 'scopeSection' || slide.type === 'modeling' || (isCustomSemVideo && !livre)
   // guarda as fotos removidas pelo "não usar imagem" pra poder devolvê-las se desmarcar
   const [imagensGuardadas, setImagensGuardadas] = useState([])
   const [images, setImages] = useState(() => effectiveImages(slide))
@@ -1593,7 +1809,7 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
   const [imagePlacement, setImagePlacement] = useState(slide.imagePlacement || 'below')
   const [imagesPerRow, setImagesPerRow] = useState(slide.imagesPerRow || '')
   const [adjustingIdx, setAdjustingIdx] = useState(null)
-  const hasSingleImage = 'image' in slide && !isMultiImage && slide.type !== 'cover'
+  const hasSingleImage = 'image' in slide && !isMultiImage && !livre && slide.type !== 'cover'
   const isCover = slide.type === 'cover'
   // a foto única agora carrega o enquadramento junto ({ url, posX, posY }) — é o mesmo
   // objeto usado pelo SingleImageField em todos os outros lugares do painel
@@ -1689,6 +1905,13 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
     setFootnote(slide.footnote || '')
     setReasonsList(slide.type === 'reasons' && Array.isArray(slide.items) ? JSON.parse(JSON.stringify(slide.items)) : [])
     setFeedbacks(slide.type === 'feedbacks' && Array.isArray(slide.items) ? JSON.parse(JSON.stringify(slide.items)) : [])
+    setFeedbackLayout(slide.feedbackLayout || 'grade')
+    setSideImages(JSON.parse(JSON.stringify(slide.sideImages || [])))
+    setAntesDepois(lerAntesDepois(slide))
+    setBgColor2(slide.bgColor2 || '')
+    setTextColor2(slide.textColor2 || '')
+    setLayoutMode(slide.layoutMode || '')
+    setBlocos(JSON.parse(JSON.stringify(slide.blocos || [{}, {}])))
   }, [slide.id])
 
   function addImages(fileList) {
@@ -1722,7 +1945,7 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
     // tópicos que vêm de "Dados do projeto" voltam para lá (só desta proposta), em vez de
     // virarem uma cópia no slide — assim o slide e os dados nunca mais ficam diferentes
     if (items && slide.fieldCode) onSaveFields?.({ [slide.fieldCode]: items.join('\n') })
-    else if (items) patch.items = items
+    else if (items && !livre) patch.items = items
     if (slide.type === 'divider') { patch.subtitle = subtitle }
     if (slide.type === 'journeyFlow') { patch.subtitle = subtitle }
     if (isClientRequest) { onSaveFields?.({ objetivoProjeto }) }
@@ -1756,7 +1979,19 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
       patch.footnote = footnote
     }
     if (isReasons) { patch.items = reasonsList }
-    if (isFeedbacks) { patch.items = feedbacks }
+    if (isFeedbacks) {
+      patch.items = feedbacks
+      patch.feedbackLayout = feedbackLayout
+      patch.sideImages = sideImages.slice(0, 2)
+    }
+    if (isBeforeAfter) {
+      Object.assign(patch, antesDepois, { bgColor2, textColor2 })
+      patch.leftImages = (antesDepois.leftImages || []).slice(0, 4)
+      patch.rightImages = (antesDepois.rightImages || []).slice(0, 4)
+    }
+    // os dois blocos são guardados sempre, mesmo na página inteira: assim, quem dividir a página,
+    // voltar para inteira e dividir de novo não perde o que tinha montado no lado direito
+    if (livre) Object.assign(patch, { layoutMode, blocos: [blocos[0] || {}, blocos[1] || {}], bgColor2, textColor2 })
 
     // imagens e cores vão no MESMO patch do resto, e são salvas no escopo escolhido pela
     // pessoa (esta proposta / este tipo de projeto / todos os tipos). Antes elas eram sempre
@@ -1797,7 +2032,9 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
         <EscalaSlider label="Descrição, tópicos e demais textos" value={textScale} onChange={setTextScale} />
       </div>
 
-      <label className="text-xs font-medium text-ink/70 block mb-1">Título</label>
+      <label className="text-xs font-medium text-ink/70 block mb-1">
+        {isBeforeAfter ? 'Nome do slide (aparece só na lista lateral)' : livre && layoutMode === 'dividido' ? 'Título do lado esquerdo' : 'Título'}
+      </label>
       {/* caixa de várias linhas: dá pra apertar Enter e a quebra aparece igual no slide */}
       <textarea value={title} rows={2} onChange={(e) => setTitle(e.target.value)} className="w-full text-sm p-2.5 rounded-lg border border-line outline-none focus:border-clay mb-1" />
       <p className="text-[11px] text-muted mb-4">Aperte Enter para quebrar o título em mais de uma linha.</p>
@@ -1892,6 +2129,18 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
           <ColorSwatchRow palette={palette} value={textColor} onChange={setTextColor} />
           <p className="text-[11px] text-muted mt-1">A cor escolhida vale também para o título. Se ficar difícil de ler sobre o fundo, o sistema clareia ou escurece o mesmo tom até dar contraste.</p>
           {isCover && <p className="text-[11px] text-muted mt-1">Na capa, a cor do texto vale também sobre a foto de fundo. Sem cor escolhida, o texto volta a ser branco.</p>}
+          {(isBeforeAfter || (livre && layoutMode === 'dividido')) && <p className="text-[11px] text-muted mt-1">As cores acima valem para o lado esquerdo.</p>}
+          <div className="mb-4" />
+        </>
+      )}
+
+      {/* página dividida: o lado direito tem cores próprias (sem escolha, fundo branco) */}
+      {(isBeforeAfter || (livre && layoutMode === 'dividido')) && (
+        <>
+          <label className="text-xs font-medium text-ink/70 block mb-1">Cor do fundo — lado direito</label>
+          <ColorSwatchRow palette={palette} value={bgColor2} onChange={setBgColor2} />
+          <label className="text-xs font-medium text-ink/70 block mb-1 mt-3">Cor do texto — lado direito</label>
+          <ColorSwatchRow palette={palette} value={textColor2} onChange={setTextColor2} />
           <div className="mb-4" />
         </>
       )}
@@ -1967,7 +2216,7 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
         </div>
       )}
 
-      {items && (
+      {items && !livre && (
         <div className="mb-4">
           <label className="text-xs font-medium text-ink/70 block mb-1">
             {slide.type === 'cover' || slide.type === 'profile' ? 'Textos (aparecem juntos, assim que o slide abre)' : 'Textos (aparecem um a um ao clicar)'}
@@ -2095,9 +2344,26 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
 
       {isFeedbacks && (
         <div className="mb-4">
+          <label className="text-xs font-medium text-ink/70 block mb-1">Como mostrar</label>
+          <Escolha
+            valor={feedbackLayout} onChange={setFeedbackLayout}
+            opcoes={[['grade', 'Vários feedbacks lado a lado'], ['unico', 'Um feedback, com fotos ao lado']]}
+          />
+          {feedbackLayout === 'unico' && (
+            <div className="border border-line rounded-lg p-3 mb-3 bg-sand">
+              <p className="text-[11px] text-muted mb-2">A página fica dividida ao meio: o primeiro feedback da lista à esquerda e as fotos do projeto à direita. Use "mostrar este" para escolher qual feedback aparece.</p>
+              <label className="text-xs font-medium text-ink/70 block mb-1">Fotos do projeto (lado direito, até 2)</label>
+              <ListaDeFotosEditor fotos={sideImages} setFotos={setSideImages} max={2} onPickFile={handleImageFile} />
+            </div>
+          )}
           <label className="text-xs font-medium text-ink/70 block mb-1">Feedbacks de clientes</label>
           {feedbacks.map((fb, i) => (
-            <div key={i} className="border border-line rounded-lg p-3 mb-3">
+            <div key={i} className={`border rounded-lg p-3 mb-3 ${feedbackLayout === 'unico' && i === 0 ? 'border-clay' : 'border-line'}`}>
+              {feedbackLayout === 'unico' && (
+                i === 0
+                  ? <div className="text-[11px] text-clay font-medium mb-2">Este é o feedback que aparece</div>
+                  : <button onClick={() => setFeedbacks((prev) => [prev[i], ...prev.filter((_, k) => k !== i)])} className="text-[11px] text-clay mb-2">mostrar este</button>
+              )}
               <div className="flex items-center gap-2 mb-2">
                 <input
                   value={fb.name || ''}
@@ -2143,9 +2409,87 @@ function EditPanel({ slide, allowGlobal, onSave, onClose, palette = DEFAULT_PALE
                   )}
                 </div>
               </div>
+              {/* foto do projeto embaixo do quadro do feedback — só no modo "vários": no modo
+                  "um feedback", as fotos do projeto ficam no lado direito da página */}
+              {feedbackLayout === 'grade' && (
+                <div className="mt-3 pt-3 border-t border-line">
+                  <SingleImageField
+                    compact label="Foto do projeto (embaixo do feedback, formato 5:4)" previewClass="w-full h-24"
+                    value={{ url: fb.projUrl || '', posX: fb.projPosX, posY: fb.projPosY }}
+                    onChange={(next) => setFeedbacks((prev) => prev.map((p, k) => k === i ? { ...p, projUrl: next.url, projPosX: next.posX, projPosY: next.posY } : p))}
+                    onPickFile={handleImageFile}
+                  />
+                </div>
+              )}
             </div>
           ))}
           <button onClick={() => setFeedbacks((prev) => [...prev, { name: '', text: '' }])} className="text-xs text-clay">+ adicionar feedback</button>
+        </div>
+      )}
+
+      {isBeforeAfter && (
+        <div className="mb-4">
+          {[['left', 'Lado esquerdo (Antes)', 'Antes'], ['right', 'Lado direito (Depois)', 'Depois']].map(([lado, rotulo, padrao]) => (
+            <div key={lado} className="border border-line rounded-lg p-3 mb-3">
+              <div className="text-sm font-medium mb-2">{rotulo}</div>
+              <label className="text-xs font-medium text-ink/70 block mb-1">Título (no topo, à esquerda)</label>
+              <input
+                value={antesDepois[`${lado}Title`]}
+                onChange={(e) => { const v = e.target.value; setAntesDepois((prev) => ({ ...prev, [`${lado}Title`]: v })) }}
+                placeholder={padrao}
+                className="w-full text-sm p-2 rounded-lg border border-line outline-none focus:border-clay mb-3"
+              />
+              <label className="text-xs font-medium text-ink/70 block mb-1">Texto (opcional)</label>
+              <textarea
+                value={antesDepois[`${lado}Text`]} rows={3}
+                onChange={(e) => { const v = e.target.value; setAntesDepois((prev) => ({ ...prev, [`${lado}Text`]: v })) }}
+                className="w-full text-sm p-2 rounded-lg border border-line outline-none focus:border-clay mb-3"
+              />
+              <label className="text-xs font-medium text-ink/70 block mb-1">Fotos (até 4)</label>
+              <ListaDeFotosEditor
+                fotos={antesDepois[`${lado}Images`] || []}
+                setFotos={(upd) => setAntesDepois((prev) => ({ ...prev, [`${lado}Images`]: upd(prev[`${lado}Images`] || []) }))}
+                max={4} onPickFile={handleImageFile}
+              />
+            </div>
+          ))}
+          <p className="text-[11px] text-muted">O lado "Depois" aparece com um clique. Enquanto a página não tiver nenhuma foto nem texto, ela não aparece para o cliente (link, modo Apresentar e PDF).</p>
+        </div>
+      )}
+
+      {/* slide extra antigo (sem formato livre): um botão converte, levando os textos e fotos */}
+      {isCustomSemVideo && !layoutMode && (
+        <div className="mb-4 p-3 border border-line rounded-lg bg-sand">
+          <p className="text-[11px] text-muted mb-2">Este slide usa o formato antigo. O formato livre deixa escolher a posição do texto, tópicos, descrição grande ou cards, e dividir a página ao meio.</p>
+          <button
+            onClick={() => {
+              setLayoutMode('inteiro')
+              setBlocos([{ formato: 'topicos', itens: (items || []).filter((t) => String(t || '').trim()), imagens: images.map((im) => ({ url: im.url, posX: im.posX, posY: im.posY, ratio: im.ratio || '' })) }, {}])
+            }}
+            className="text-xs px-3 py-1.5 rounded-full bg-ink text-white"
+          >✨ Usar o formato livre</button>
+        </div>
+      )}
+
+      {livre && (
+        <div className="mb-4">
+          <label className="text-xs font-medium text-ink/70 block mb-1">Formato da página</label>
+          <Escolha valor={layoutMode} onChange={setLayoutMode} opcoes={[['inteiro', 'Página inteira'], ['dividido', 'Dividida ao meio']]} />
+          {(layoutMode === 'dividido' ? [0, 1] : [0]).map((i) => (
+            <EditorDeBloco
+              key={i}
+              rotulo={layoutMode === 'dividido' ? (i === 0 ? 'Lado esquerdo' : 'Lado direito') : ''}
+              mostrarTitulo={i === 1}
+              maxFotos={layoutMode === 'dividido' ? 4 : 6}
+              bloco={blocos[i] || {}}
+              setBloco={(upd) => setBlocos((prev) => {
+                const proximo = [prev[0] || {}, prev[1] || {}]
+                proximo[i] = upd(proximo[i])
+                return proximo
+              })}
+              onPickFile={handleImageFile}
+            />
+          ))}
         </div>
       )}
 
@@ -2780,35 +3124,11 @@ function SlideBody({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
       )
     }
 
-    case 'feedbacks': {
-      const { bg, heading, titleColor } = slideColors(slide, INK, c1)
-      return (
-        /* os cards precisam de uma altura definida: o print é desenhado como FUNDO do card
-           (é assim que ele sai certo no PDF), e fundo não tem altura própria como uma <img>.
-           Sem isso o card com print virava uma faixa de altura zero e o slide ficava só com
-           o título. Com a faixa em flex-1 e as linhas em 1fr, todo card tem altura real. */
-        <div className="w-full h-full p-16 flex flex-col" style={{ background: bg }}>
-          <h2 className="text-4xl mb-8 shrink-0" style={{ ...titleStyle, color: titleColor }}>{slide.title}</h2>
-          <GradeDeFeedbacks itens={slide.items} revealCount={revealCount} radius={radius} corDoCard={heading === '#FFFFFF' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)'}>
-            {(fb, i, estiloCard) => (
-              <Reveal key={i} i={i} revealCount={revealCount} className="overflow-hidden" style={estiloCard}>
-                {fb.printUrl ? (
-                  <div className="w-full h-full" style={{ ...coverBg(fb.printUrl, `${fb.printPosX ?? 50}% ${fb.printPosY ?? 50}%`) }} />
-                ) : (
-                  <div className="p-5">
-                    <div className="flex items-center gap-3 mb-3">
-                      {fb.photoUrl && <div className="w-9 h-9 rounded-full shrink-0" style={coverBg(fb.photoUrl, `${fb.photoPosX ?? 50}% ${fb.photoPosY ?? 50}%`)} />}
-                      <div className="text-base font-semibold" style={{ color: c1 }}>{fb.name}</div>
-                    </div>
-                    <div className="text-base" style={{ color: heading, opacity: 0.85 }}>{fb.text}</div>
-                  </div>
-                )}
-              </Reveal>
-            )}
-          </GradeDeFeedbacks>
-        </div>
-      )
-    }
+    case 'feedbacks':
+      return <FeedbacksSlide slide={slide} c1={c1} revealCount={revealCount} radius={radius} />
+
+    case 'beforeAfter':
+      return <AntesDepoisSlide slide={slide} c1={c1} revealCount={revealCount} radius={radius} />
 
     case 'pricingCalc': {
       const { bg, heading, titleColor } = slideColors(slide, SAND, c1)
@@ -2982,6 +3302,11 @@ function SlideBody({ slide, c1, c2, c3, revealCount, settings, exportMode }) {
       )
 
     case 'custom': {
+      // slide livre: a pessoa escolhe página inteira ou dividida, o formato do texto e a posição.
+      // Slides extras criados antes disso (sem layoutMode) seguem com o desenho antigo, abaixo.
+      if (slide.layoutMode && !slide.embedUrl && !slide.videoUrl) {
+        return <SlideLivre slide={slide} c1={c1} radius={radius} />
+      }
       // sem vídeo, o slide extra passa a se comportar exatamente como as seções de escopo:
       // título, tópicos e uma faixa de fotos (nenhuma, uma ou várias). É isso que faz o
       // "não usar imagem" funcionar de verdade aqui — antes sobrava sempre a metade direita
@@ -3250,19 +3575,34 @@ function useTamanhoDaCaixa(ref) {
  * não tivesse sido salva. Aqui o card cresce até bater na largura OU na altura da célula, o
  * que vier primeiro, e o formato vale de verdade.
  */
-function GradeDeFeedbacks({ itens, radius, corDoCard, children }) {
+function GradeDeFeedbacks({ itens, revealCount, radius, corDoCard, conteudo }) {
   const ref = useRef(null)
   const box = useTamanhoDaCaixa(ref)
-  const GAP = 16
+  // mais espaço entre os quadros (antes eram 16px): com a foto do projeto embaixo de cada
+  // feedback, os quadros colados uns nos outros viravam um bloco só, difícil de ler
+  const GAP = 44
+  const ROW_GAP = 28
+  const ESPACO_FOTO = 16
   const colunas = Math.min(itens.length || 1, 3)
+  const linhas = Math.max(1, Math.ceil((itens.length || 1) / colunas))
   const cellW = box.w ? (box.w - GAP * (colunas - 1)) / colunas : 0
-  const cellH = box.h || 0
+  const cellH = box.h ? (box.h - ROW_GAP * (linhas - 1)) / linhas : 0
+  // foto do projeto embaixo do feedback, sempre 5:4 (paisagem). Basta UM feedback ter foto para
+  // todos reservarem o espaço dela — assim os quadros ficam alinhados no topo, do mesmo tamanho,
+  // em vez de cada um numa altura. A foto fica com até 45% da altura; o quadro diminui para caber.
+  const temFotoProjeto = itens.some((fb) => fb.projUrl)
+  const fotoH = temFotoProjeto && cellW && cellH ? Math.min(cellW / 1.25, cellH * 0.45) : 0
+  const cardH = cellH ? cellH - (fotoH ? fotoH + ESPACO_FOTO : 0) : 0
+  // com foto, o quadro do feedback fica com a mesma largura da foto: os dois formam uma coluna
+  // só, alinhada, em vez de um quadro largo com uma foto mais estreita embaixo
+  const larguraMax = fotoH ? fotoH * 1.25 : cellW
 
   function estiloDoCard(fb) {
     const r = fb.printUrl ? RATIO_NUM[fb.printRatio] : null
     const base = { borderRadius: radius, background: corDoCard }
-    if (!r || !cellW || !cellH) return { ...base, width: '100%', height: '100%' }
-    const largura = Math.min(cellW, cellH * r)
+    if (!cellW || !cardH) return { ...base, width: '100%', height: '100%' }
+    if (!r) return { ...base, width: larguraMax, maxWidth: '100%', height: cardH }
+    const largura = Math.min(larguraMax, cardH * r)
     return { ...base, width: largura, height: largura / r }
   }
 
@@ -3270,15 +3610,231 @@ function GradeDeFeedbacks({ itens, radius, corDoCard, children }) {
     <div ref={ref} className="flex-1 min-h-0 w-full">
       <div
         className="grid h-full"
-        style={{ gap: GAP, gridTemplateColumns: `repeat(${colunas}, minmax(0, 1fr))`, justifyItems: 'start', alignItems: 'center' }}
+        style={{ columnGap: GAP, rowGap: ROW_GAP, gridTemplateColumns: `repeat(${colunas}, minmax(0, 1fr))`, gridTemplateRows: `repeat(${linhas}, minmax(0, 1fr))` }}
       >
-        {itens.map((fb, i) => children(fb, i, estiloDoCard(fb)))}
+        {itens.map((fb, i) => (
+          <Reveal
+            key={i} i={i} revealCount={revealCount} className="flex flex-col min-h-0"
+            style={{ justifyContent: temFotoProjeto ? 'flex-start' : 'center', gap: ESPACO_FOTO }}
+          >
+            <div className="overflow-hidden shrink-0" style={estiloDoCard(fb)}>{conteudo(fb)}</div>
+            {fb.projUrl && (
+              <div
+                className="shrink-0"
+                style={{ width: fotoH * 1.25, height: fotoH, maxWidth: '100%', borderRadius: radius, ...coverBg(fb.projUrl, `${fb.projPosX ?? 50}% ${fb.projPosY ?? 50}%`) }}
+              />
+            )}
+          </Reveal>
+        ))}
       </div>
     </div>
   )
 }
 
-function ImageStrip({ imgs, layout, perRow, revealCount, radius }) {
+/**
+ * Slide de feedbacks em dois formatos:
+ *  - grade (padrão): até 3 por fileira, cada um com a foto do projeto (opcional) embaixo;
+ *  - "unico": a página dividida ao meio — o primeiro feedback da lista à esquerda e até 2 fotos
+ *    do projeto à direita, com formato e enquadramento escolhidos.
+ * Os cards precisam de altura definida: o print é desenhado como FUNDO do card (é assim que ele
+ * sai certo no PDF), e fundo não tem altura própria como uma <img>.
+ */
+function FeedbacksSlide({ slide, c1, revealCount, radius }) {
+  const { bg, heading, titleColor } = slideColors(slide, INK, c1)
+  const corDoCard = heading === '#FFFFFF' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)'
+  const itens = slide.items || []
+
+  const conteudo = (fb, grande) => (fb.printUrl ? (
+    <div className="w-full h-full" style={{ ...coverBg(fb.printUrl, `${fb.printPosX ?? 50}% ${fb.printPosY ?? 50}%`) }} />
+  ) : (
+    <div className={grande ? 'p-8' : 'p-5'}>
+      <div className="flex items-center gap-3 mb-3">
+        {fb.photoUrl && <div className={`${grande ? 'w-14 h-14' : 'w-9 h-9'} rounded-full shrink-0`} style={coverBg(fb.photoUrl, `${fb.photoPosX ?? 50}% ${fb.photoPosY ?? 50}%`)} />}
+        <div className={`${grande ? 'text-xl' : 'text-base'} font-semibold`} style={{ color: c1 }}>{fb.name}</div>
+      </div>
+      <div className={grande ? 'text-xl leading-relaxed' : 'text-base'} style={{ color: heading, opacity: 0.85 }}>{fb.text}</div>
+    </div>
+  ))
+
+  if (slide.feedbackLayout === 'unico') {
+    const fb = itens[0]
+    const fotos = (slide.sideImages || []).slice(0, 2)
+    return (
+      <div className="w-full h-full grid grid-cols-2" style={{ background: bg }}>
+        <div className="p-16 pr-8 flex flex-col min-h-0">
+          <h2 className="text-4xl mb-8 shrink-0" style={{ ...titleStyle, color: titleColor }}>{slide.title}</h2>
+          {fb && <FeedbackUnico fb={fb} radius={radius} corDoCard={corDoCard}>{conteudo(fb, true)}</FeedbackUnico>}
+        </div>
+        <div className="p-16 pl-8 flex flex-col min-h-0">
+          {fotos.length > 0 && (
+            <div className="flex-1 min-h-0">
+              <ImageStrip imgs={fotos} layout="row" perRow={fotos.length} revealCount={999} radius={radius} />
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="w-full h-full p-16 flex flex-col" style={{ background: bg }}>
+      <h2 className="text-4xl mb-8 shrink-0" style={{ ...titleStyle, color: titleColor }}>{slide.title}</h2>
+      <GradeDeFeedbacks itens={itens} revealCount={revealCount} radius={radius} corDoCard={corDoCard} conteudo={(fb) => conteudo(fb, false)} />
+    </div>
+  )
+}
+
+/** O card do feedback sozinho: com print em formato escolhido, o tamanho é calculado (mesma
+ *  regra da grade); sem print, o card ocupa a largura da metade e a altura do próprio texto. */
+function FeedbackUnico({ fb, radius, corDoCard, children }) {
+  const ref = useRef(null)
+  const box = useTamanhoDaCaixa(ref)
+  let estilo = { borderRadius: radius, background: corDoCard, width: '100%' }
+  if (fb.printUrl) {
+    const r = RATIO_NUM[fb.printRatio]
+    if (r && box.w && box.h) {
+      const w = Math.min(box.w, box.h * r)
+      estilo = { ...estilo, width: w, height: w / r }
+    } else {
+      estilo = { ...estilo, height: '100%' }
+    }
+  }
+  return (
+    <div ref={ref} className="flex-1 min-h-0 w-full flex items-center">
+      <div className="overflow-hidden" style={estilo}>{children}</div>
+    </div>
+  )
+}
+
+/**
+ * "Antes e depois": página dividida ao meio, cada lado com o seu título no topo à esquerda,
+ * um texto opcional e até 4 fotos (formato e enquadramento escolhidos foto a foto). O lado
+ * "Depois" tem cor de fundo e de texto próprias (bgColor2/textColor2) e entra com um clique.
+ */
+function AntesDepoisSlide({ slide, c1, revealCount, radius }) {
+  const esquerda = slideColors(slide, SAND, c1)
+  const direita = slideColors({ bgColor: slide.bgColor2, textColor: slide.textColor2 }, '#FFFFFF', c1)
+  // slide inteiro vazio só aparece na tela de edição (o cliente nunca o vê — ver slideVazio);
+  // ali vale mostrar onde as fotos vão entrar
+  const vazio = slideVazio(slide)
+  const temDepois = (slide.rightImages?.length || 0) > 0 || String(slide.rightText || '').trim()
+
+  const lado = (titulo, texto, fotos, cores, aviso) => (
+    <div className="h-full min-h-0 p-14 flex flex-col" style={{ background: cores.bg }}>
+      <h2 className="text-4xl mb-4 shrink-0 text-left" style={{ ...titleStyle, color: cores.titleColor }}>{titulo}</h2>
+      {String(texto || '').trim() && (
+        <p className="text-lg mb-6 shrink-0 whitespace-pre-line max-w-xl text-left" style={{ color: cores.heading, opacity: 0.8 }}>{texto}</p>
+      )}
+      <div className="flex-1 min-h-0">
+        {fotos.length > 0 ? (
+          // até 2 fotos lado a lado; com 3 ou 4, duas por fileira (2 em cima, 2 embaixo)
+          <ImageStrip imgs={fotos} layout="grid" perRow={fotos.length <= 2 ? fotos.length : 2} revealCount={999} radius={radius} />
+        ) : vazio ? (
+          <div className="w-full h-full border-2 border-dashed flex items-center justify-center text-base text-center px-6" style={{ borderColor: cores.heading, color: cores.heading, opacity: 0.35, borderRadius: radius }}>
+            {aviso}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  )
+
+  const ladoDepois = lado(slide.rightTitle ?? 'Depois', slide.rightText, slide.rightImages || [], direita, 'Fotos do depois: clique em ✎ Editar slide')
+  return (
+    <div className="w-full h-full grid grid-cols-2">
+      {lado(slide.leftTitle ?? 'Antes', slide.leftText, slide.leftImages || [], esquerda, 'Fotos do antes: clique em ✎ Editar slide')}
+      {temDepois ? <Reveal i={0} revealCount={revealCount} className="h-full min-h-0">{ladoDepois}</Reveal> : ladoDepois}
+    </div>
+  )
+}
+
+/**
+ * Slide livre (o "Novo slide"): página inteira ou dividida ao meio. Cada parte é um "bloco"
+ * com título, texto num dos formatos (tópicos, descrição grande ou cards), fotos opcionais e a
+ * posição escolhida (esquerda/centro/direita × topo/meio/embaixo). O título da página inteira —
+ * ou do lado esquerdo — é o próprio título do slide (o que aparece na lista lateral).
+ */
+function SlideLivre({ slide, c1, radius }) {
+  const blocos = slide.blocos || []
+  const blocoA = { ...(blocos[0] || {}), titulo: slide.title }
+  if (slide.layoutMode === 'dividido') {
+    const coresA = slideColors(slide, SAND, c1)
+    const coresB = slideColors({ bgColor: slide.bgColor2, textColor: slide.textColor2 }, '#FFFFFF', c1)
+    return (
+      <div className="w-full h-full grid grid-cols-2">
+        <BlocoLivre bloco={blocoA} cores={coresA} c1={c1} radius={radius} metade />
+        <BlocoLivre bloco={blocos[1] || {}} cores={coresB} c1={c1} radius={radius} metade />
+      </div>
+    )
+  }
+  return <BlocoLivre bloco={blocoA} cores={slideColors(slide, SAND, c1)} c1={c1} radius={radius} />
+}
+
+const ALINHAR_H = { left: 'flex-start', center: 'center', right: 'flex-end' }
+const ALINHAR_V = { top: 'flex-start', center: 'center', bottom: 'flex-end' }
+
+function BlocoLivre({ bloco, cores, c1, radius, metade = false }) {
+  const h = bloco.alinhH || 'left'
+  const v = bloco.alinhV || 'center'
+  const fotos = bloco.imagens || []
+  const formato = bloco.formato || 'topicos'
+  const topicos = (bloco.itens || []).filter((t) => String(t || '').trim())
+  const cards = (bloco.cards || []).filter((c) => String(c.titulo || '').trim() || String(c.texto || '').trim())
+  const descricao = String(bloco.texto || '').trim()
+  const temTexto = (formato === 'topicos' && topicos.length) || (formato === 'descricao' && descricao) || (formato === 'cards' && cards.length)
+  const corDoCard = cores.heading === '#FFFFFF' ? 'rgba(255,255,255,0.1)' : '#FFFFFF'
+  // sem foto, o texto pode ocupar a página toda (antes ficava preso numa coluna estreita);
+  // a largura máxima só existe para a linha não ficar comprida demais de ler
+  const larguraTexto = metade ? '100%' : '80%'
+
+  return (
+    <div
+      className="w-full h-full min-h-0 p-16 flex flex-col overflow-hidden"
+      style={{ background: cores.bg, justifyContent: fotos.length ? 'flex-start' : ALINHAR_V[v], alignItems: ALINHAR_H[h], textAlign: h }}
+    >
+      {String(bloco.titulo || '').trim() && (
+        <h2 className="text-4xl mb-6 shrink-0" style={{ ...titleStyle, color: cores.titleColor }}>{bloco.titulo}</h2>
+      )}
+
+      {formato === 'topicos' && topicos.length > 0 && (
+        <div className="space-y-3 shrink-0" style={{ maxWidth: larguraTexto }}>
+          {topicos.map((t, i) => (
+            <div key={i} className="flex items-start gap-3 text-xl" style={{ justifyContent: ALINHAR_H[h], color: cores.heading, opacity: 0.85 }}>
+              <span style={{ color: c1 }}>●</span><span>{t}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {formato === 'descricao' && descricao && (
+        // "descrição grande": maior que um tópico, e ainda acompanha o controle de tamanho do texto
+        <p className="whitespace-pre-line shrink-0" style={{ maxWidth: larguraTexto, color: cores.heading, opacity: 0.85, fontSize: 'calc(1.6rem * var(--esc-texto))', lineHeight: 1.45 }}>{descricao}</p>
+      )}
+
+      {formato === 'cards' && cards.length > 0 && (
+        <div className="grid gap-4 shrink-0 w-full" style={{ gridTemplateColumns: `repeat(${Math.min(cards.length, metade ? 2 : 3)}, minmax(0, 1fr))` }}>
+          {cards.map((c, i) => (
+            <div key={i} className="p-6" style={{ borderRadius: radius, background: corDoCard, border: corDoCard === '#FFFFFF' ? '1px solid #E4DFD6' : 'none' }}>
+              {String(c.titulo || '').trim() && <div className="text-lg font-semibold mb-2" style={{ color: c1 }}>{c.titulo}</div>}
+              {String(c.texto || '').trim() && <div className="text-base whitespace-pre-line" style={{ color: corDoCard === '#FFFFFF' ? '#28313C' : cores.heading, opacity: 0.85 }}>{c.texto}</div>}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {fotos.length > 0 && (
+        <div className={`flex-1 min-h-0 w-full self-stretch ${String(bloco.titulo || '').trim() || temTexto ? 'mt-8' : ''}`}>
+          <ImageStrip
+            imgs={fotos} layout="row" revealCount={999} radius={radius}
+            perRow={fotos.length > 3 ? Math.ceil(fotos.length / 2) : fotos.length}
+            alinhar={h === 'center' ? 'center' : h === 'right' ? 'end' : 'start'}
+          />
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ImageStrip({ imgs, layout, perRow, revealCount, radius, alinhar = 'start' }) {
   const ref = useRef(null)
   const box = useTamanhoDaCaixa(ref)
 
@@ -3315,7 +3871,9 @@ function ImageStrip({ imgs, layout, perRow, revealCount, radius }) {
           height: '100%',
           gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
           gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))`,
-          justifyItems: 'start',
+          // à esquerda por padrão (alinhada com título e tópicos); o slide livre centraliza ou
+          // encosta à direita quando o texto do bloco está assim
+          justifyItems: alinhar,
           alignItems: 'center',
         }}
       >

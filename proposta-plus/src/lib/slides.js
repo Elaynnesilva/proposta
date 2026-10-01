@@ -106,6 +106,15 @@ export function buildSlides({ fields, content, images, settings, custom = [], vi
     items: ['Imagens e vídeos realistas', 'Vistas internas e externas', 'Imagens de todos os ângulos'],
   })
 
+  // "Antes e depois": página dividida ao meio, logo abaixo da Modelagem 3D. Nasce sem fotos —
+  // as fotos e os textos entram pelo "Editar slide" (esta proposta, este tipo ou todas). Enquanto
+  // estiver vazia, ela NÃO aparece para o cliente (nem no link, nem no modo Apresentar, nem no
+  // PDF): assim nenhuma proposta, nem as que já foram enviadas, ganha uma página em branco.
+  list.push({
+    id: 'antes-depois', type: 'beforeAfter', title: 'Antes e depois',
+    leftTitle: 'Antes', rightTitle: 'Depois', leftText: '', rightText: '', leftImages: [], rightImages: [],
+  })
+
   // o vídeo vem logo depois da Modelagem 3D: é ali que se fala de "imagens e vídeos realistas",
   // então o cliente vê o exemplo no mesmo momento. Antes ele ficava quase no fim, depois dos
   // pacotes, e precisava ser arrastado à mão em toda proposta nova.
